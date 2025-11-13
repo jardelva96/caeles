@@ -4,7 +4,7 @@
 
 ---
 <p align="center">
-  <img src="./assets/caeleslogo.png" alt="Logo CAELES" width="320" />
+  <img src="./caeleslogo.png" alt="Logo CAELES" width="320" />
 </p>
 
 ## 🔍 O que é o CAELES?
