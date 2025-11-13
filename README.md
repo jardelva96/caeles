@@ -1,7 +1,6 @@
 # CAELES
 
 > **CAELES** é um motor de **cápsulas WebAssembly** focado em **Android**.  
-> Não é container, não é Docker-like. É um formato próprio: **cápsulas CAELES**.
 
 ---
 
