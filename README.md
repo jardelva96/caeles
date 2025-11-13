@@ -105,7 +105,6 @@ target/wasm32-wasi/debug/minha-capsula.wasm
 Criar um manifesto CAELES apontando para o .wasm:
 
 ```json
-Copiar código
 {
   "id": "com.caeles.examples.mycapsule",
   "name": "Minha Cápsula CAELES",
