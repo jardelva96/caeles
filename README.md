@@ -1,8 +1,7 @@
 # CAELES
 
-> **CAELES** é um motor de **cápsulas WebAssembly** focado em **Android**.  
+**CAELES** é um motor de **cápsulas WebAssembly** focado em **Android**.  
 
----
 <p align="center">
   <img src="./caeleslogo.png" alt="Logo CAELES" width="320" />
 </p>
