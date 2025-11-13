@@ -29,7 +29,6 @@ Ela é composta por:
 Exemplo **simplificado** de manifesto (formato ainda em evolução):
 
 ```
-json
 {
   "id": "com.caeles.example.demo",
   "name": "Cápsula Demo",
