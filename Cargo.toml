@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "crates/caeles-runtime",
+    "crates/caeles-sdk",
+    "capsules/hello-capsule",
+    "capsules/logger-capsule",
+]
+resolver = "2"

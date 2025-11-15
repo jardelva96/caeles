@@ -1,0 +1,14 @@
+# Build artifacts do Rust
+/target
+
+# Binários WebAssembly gerados
+**/*.wasm
+
+# Arquivos de editor/IDE
+.vscode/
+.idea/
+*.iml
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db

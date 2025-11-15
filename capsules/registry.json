@@ -1,0 +1,12 @@
+[
+  {
+    "id": "com.caeles.example.hello",
+    "name": "Hello Capsule",
+    "manifest": "capsules/hello-capsule/manifest.json"
+  },
+  {
+    "id": "com.caeles.example.logger",
+    "name": "Logger Capsule",
+    "manifest": "capsules/logger-capsule/manifest.json"
+  }
+]
