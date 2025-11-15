@@ -5,7 +5,9 @@
   "entry": "../../target/wasm32-unknown-unknown/debug/logger_capsule.wasm",
   "permissions": {
     "notifications": true,
-    "network": false
+    "network": false,
+    "metrics": false,
+    "storage": false
   },
   "lifecycle": {
     "kind": "on_demand"

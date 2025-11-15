@@ -1,11 +1,11 @@
 {
-  "id": "com.caeles.example.hello",
-  "name": "Hello Capsule",
+  "id": "com.caeles.example.network",
+  "name": "Network Capsule",
   "version": "0.1.0",
-  "entry": "../../target/wasm32-unknown-unknown/debug/hello_capsule.wasm",
+  "entry": "../../target/wasm32-unknown-unknown/debug/network_capsule.wasm",
   "permissions": {
     "notifications": true,
-    "network": false,
+    "network": true,
     "metrics": false,
     "storage": false
   },

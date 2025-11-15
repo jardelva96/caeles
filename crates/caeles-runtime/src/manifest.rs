@@ -10,6 +10,8 @@ fn default_path_buf() -> PathBuf {
 pub struct Permissions {
     pub notifications: bool,
     pub network: bool,
+    pub metrics: bool,
+    pub storage: bool,
 }
 
 #[derive(Debug, Deserialize)]
