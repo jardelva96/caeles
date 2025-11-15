@@ -1,0 +1,13 @@
+{
+  "id": "com.caeles.example.logger",
+  "name": "Logger Capsule",
+  "version": "0.1.0",
+  "entry": "../../target/wasm32-unknown-unknown/debug/logger_capsule.wasm",
+  "permissions": {
+    "notifications": true,
+    "network": false
+  },
+  "lifecycle": {
+    "kind": "on_demand"
+  }
+}
