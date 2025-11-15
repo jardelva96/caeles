@@ -21,16 +21,20 @@ struct RegistryEntry {
 )]
 struct Args {
     /// Caminho para o arquivo de manifest JSON da cápsula
-    #[arg(long, conflicts_with = "capsule_id")]
+    #[arg(long)]
     manifest: Option<PathBuf>,
 
     /// ID da cápsula (procurado no registry JSON)
-    #[arg(long, conflicts_with = "manifest")]
+    #[arg(long)]
     capsule_id: Option<String>,
 
     /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
+
+    /// Lista as cápsulas cadastradas no registry e sai
+    #[arg(long)]
+    list_capsules: bool,
 }
 
 fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result<CapsuleManifest> {
@@ -46,8 +50,30 @@ fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result
     CapsuleManifest::load(manifest_path)
 }
 
+fn list_capsules(registry_path: &Path) -> anyhow::Result<()> {
+    let text = fs::read_to_string(registry_path)?;
+    let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
+
+    println!(
+        "Capsules registradas em \"{}\":",
+        registry_path.to_string_lossy()
+    );
+
+    for e in entries {
+        println!("- {:<30} ({}) -> {}", e.id, e.name, e.manifest);
+    }
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if args.list_capsules {
+        // Só lista e sai
+        list_capsules(&args.registry)?;
+        return Ok(());
+    }
 
     let manifest = if let Some(path) = args.manifest {
         // Caminho direto para o manifest
@@ -56,7 +82,7 @@ fn main() -> anyhow::Result<()> {
         // Resolve via registry
         load_manifest_from_registry(&args.registry, &id)?
     } else {
-        anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>");
+        anyhow::bail!("Use --manifest <arquivo>, --capsule-id <id-da-capsula> ou --list-capsules");
     };
 
     runtime::run_capsule(&manifest)

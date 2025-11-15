@@ -4,5 +4,8 @@ members = [
     "crates/caeles-sdk",
     "capsules/hello-capsule",
     "capsules/logger-capsule",
+    "capsules/network-capsule",
+    "capsules/metrics-capsule",
+    "capsules/audit-capsule",
 ]
 resolver = "2"

@@ -8,5 +8,20 @@
     "id": "com.caeles.example.logger",
     "name": "Logger Capsule",
     "manifest": "capsules/logger-capsule/manifest.json"
+  },
+  {
+    "id": "com.caeles.example.network",
+    "name": "Network Capsule",
+    "manifest": "capsules/network-capsule/manifest.json"
+  },
+  {
+    "id": "com.caeles.example.metrics",
+    "name": "Metrics Capsule",
+    "manifest": "capsules/metrics-capsule/manifest.json"
+  },
+  {
+    "id": "com.caeles.example.audit",
+    "name": "Audit Capsule",
+    "manifest": "capsules/audit-capsule/manifest.json"
   }
 ]

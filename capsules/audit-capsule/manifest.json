@@ -1,0 +1,15 @@
+{
+  "id": "com.caeles.example.audit",
+  "name": "Audit Capsule",
+  "version": "0.1.0",
+  "entry": "../../target/wasm32-unknown-unknown/debug/audit_capsule.wasm",
+  "permissions": {
+    "notifications": true,
+    "network": true,
+    "metrics": true,
+    "storage": true
+  },
+  "lifecycle": {
+    "kind": "on_demand"
+  }
+}
