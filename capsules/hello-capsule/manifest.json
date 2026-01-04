@@ -2,11 +2,22 @@
   "id": "com.caeles.example.hello",
   "name": "Hello Capsule",
   "version": "0.1.0",
-  "entry": "../../target/wasm32-unknown-unknown/debug/hello_capsule.wasm",
+  "entry": "../../target/wasm32-wasi/debug/hello_capsule.wasm",
   "permissions": {
     "notifications": true,
-    "network": false
+    "network": false,
+    "inherit_stdio": true
   },
+  "env": {
+    "GREETING": "Olá do manifest!"
+  },
+  "preopened_dirs": [
+    {
+      "host": "./data",
+      "guest": "/data",
+      "read_only": true
+    }
+  ],
   "lifecycle": {
     "kind": "on_demand"
   }
