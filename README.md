@@ -188,6 +188,16 @@ Ou em JSON, pronto para parsing:
 cargo run -p caeles-runtime -- list --format json
 ```
 
+### UI de terminal (básica)
+
+Para explorar o registry e rodar cápsulas sem lembrar comandos:
+
+```
+cargo run -p caeles-runtime -- ui
+```
+
+Você verá uma lista numerada; digite o índice para rodar, `r` para recarregar ou `q` para sair. Isso ajuda a validar rapidamente o fluxo enquanto a interface gráfica não está pronta.
+
 Ou, no futuro, via um app host que lista e executa cápsulas.
 
 🤝 Contribuição

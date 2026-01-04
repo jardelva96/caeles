@@ -23,6 +23,8 @@ enum Commands {
     Run(RunArgs),
     /// Lista as cápsulas disponíveis no registry.
     List(ListArgs),
+    /// Interface interativa em terminal para listar e executar cápsulas.
+    Ui(UiArgs),
 }
 
 #[derive(Debug, ClapArgs)]
@@ -51,6 +53,13 @@ struct ListArgs {
     format: String,
 }
 
+#[derive(Debug, ClapArgs)]
+struct UiArgs {
+    /// Caminho para o arquivo de registry de cápsulas
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+}
+
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
     pub id: String,
@@ -75,6 +84,69 @@ fn list_registry(registry_path: &Path) -> anyhow::Result<Vec<RegistryEntry>> {
     let text = fs::read_to_string(registry_path)?;
     let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
     Ok(entries)
+}
+
+fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
+    use std::io::{self, Write};
+
+    loop {
+        let entries = list_registry(registry_path)?;
+
+        if entries.is_empty() {
+            println!("Nenhuma cápsula encontrada em {}.", registry_path.display());
+        } else {
+            println!("Capsules disponíveis:");
+            for (idx, entry) in entries.iter().enumerate() {
+                println!(
+                    "  [{}] {} ({}) -> {}",
+                    idx + 1,
+                    entry.name,
+                    entry.id,
+                    entry.manifest
+                );
+            }
+        }
+
+        println!("\nEscolha um número para executar, 'r' para recarregar ou 'q' para sair.");
+        print!("> ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+
+        if trimmed.eq_ignore_ascii_case("q") {
+            println!("Saindo da UI.");
+            break;
+        } else if trimmed.eq_ignore_ascii_case("r") {
+            continue;
+        }
+
+        let idx: usize = match trimmed.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                println!("Entrada inválida: {trimmed}");
+                continue;
+            }
+        };
+
+        if idx == 0 || idx > entries.len() {
+            println!("Índice fora do intervalo.");
+            continue;
+        }
+
+        let selected = &entries[idx - 1];
+        println!("Executando cápsula {} ({})...", selected.name, selected.id);
+
+        match load_manifest_from_registry(registry_path, &selected.id)
+            .and_then(|manifest| runtime::run_capsule(&manifest))
+        {
+            Ok(_) => println!("Execução concluída.\n"),
+            Err(err) => println!("Falha ao executar cápsula: {err}\n"),
+        }
+    }
+
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -106,5 +178,6 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Commands::Ui(args) => ui_loop(&args.registry),
     }
 }
