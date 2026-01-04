@@ -138,6 +138,16 @@ O comando abre um passo a passo interativo pedindo ID, nome, versão, caminho do
 cargo run -p caeles-runtime -- init --id com.caeles.demo --name "Demo" --allow-notifications
 ```
 
+### Interface web para criar manifest
+
+Também é possível criar manifestos via navegador com a interface web mínima embutida no runtime:
+
+```
+cargo run -p caeles-runtime -- web --host 127.0.0.1 --port 8080
+```
+
+Abra o endereço informado (por padrão http://127.0.0.1:8080), preencha os campos e copie o JSON gerado. Ele já segue o formato esperado pelo runtime (alvo `wasm32-unknown-unknown` e permissões de host).
+
 🤝 Contribuição
 No momento, o foco é:
 
