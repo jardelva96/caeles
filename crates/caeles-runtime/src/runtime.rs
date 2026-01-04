@@ -35,6 +35,14 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
     let engine = Engine::default();
 
     let module_path = manifest.wasm_path();
+    if !module_path.exists() {
+        anyhow::bail!(
+            "Arquivo WASM não encontrado em '{}'. Compile a cápsula com \
+             `cargo build --target wasm32-unknown-unknown` e verifique o campo \
+             `entry` do manifest.",
+            module_path.display()
+        );
+    }
     println!("> Carregando cápsula: {}", module_path.display());
 
     // Carrega o módulo WASM da cápsula (wasm32-unknown-unknown)

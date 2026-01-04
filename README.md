@@ -124,6 +124,9 @@ Executar com o núcleo CAELES (quando disponível):
 caeles-runtime --manifest path/para/capsule.manifest.json
 Ou, no Android, via um app host que lista e executa cápsulas.
 
+> Dica rápida: o placeholder `<manifest>` deve ser substituído por um caminho real,
+> por exemplo: `cargo run -p caeles-runtime -- --manifest capsules/hello-capsule/capsule.manifest.json`.
+
 ### Interface inicial para criar manifest
 
 Use o assistente embutido para gerar rapidamente um manifesto compatível com o runtime:
@@ -147,6 +150,24 @@ cargo run -p caeles-runtime -- web --host 127.0.0.1 --port 8080
 ```
 
 Abra o endereço informado (por padrão http://127.0.0.1:8080), preencha os campos e copie o JSON gerado. Ele já segue o formato esperado pelo runtime (alvo `wasm32-unknown-unknown` e permissões de host).
+
+### Compilando cápsulas no Windows
+
+Os erros de link envolvendo `host_log` e `host_notify` acontecem quando a cápsula é
+compilada como DLL nativa (alvo padrão). A cápsula precisa ser gerada como WASM:
+
+```
+rustup target add wasm32-unknown-unknown
+cargo build -p hello-capsule --target wasm32-unknown-unknown
+cargo build -p logger-capsule --target wasm32-unknown-unknown
+```
+
+Depois de gerar o `.wasm`, aponte o campo `entry` do manifest para o caminho correto,
+por exemplo:
+
+```
+capsules/hello-capsule/target/wasm32-unknown-unknown/debug/hello_capsule.wasm
+```
 
 🤝 Contribuição
 No momento, o foco é:
