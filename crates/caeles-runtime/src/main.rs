@@ -51,6 +51,10 @@ struct ListArgs {
     /// Formato de saída (texto ou json)
     #[arg(long, value_parser = ["text", "json"], default_value = "text")]
     format: String,
+
+    /// Filtro (trecho do ID ou nome)
+    #[arg(long)]
+    filter: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -86,17 +90,40 @@ fn list_registry(registry_path: &Path) -> anyhow::Result<Vec<RegistryEntry>> {
     Ok(entries)
 }
 
+fn filter_entries<'a>(
+    entries: &'a [RegistryEntry],
+    filter: &Option<String>,
+) -> Vec<&'a RegistryEntry> {
+    if let Some(f) = filter {
+        let needle = f.to_lowercase();
+        entries
+            .iter()
+            .filter(|e| {
+                e.id.to_lowercase().contains(&needle) || e.name.to_lowercase().contains(&needle)
+            })
+            .collect()
+    } else {
+        entries.iter().collect()
+    }
+}
+
 fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
     use std::io::{self, Write};
 
+    let mut filter: Option<String> = None;
+
     loop {
         let entries = list_registry(registry_path)?;
+        let visible_entries = filter_entries(&entries, &filter);
 
         if entries.is_empty() {
             println!("Nenhuma cápsula encontrada em {}.", registry_path.display());
         } else {
             println!("Capsules disponíveis:");
-            for (idx, entry) in entries.iter().enumerate() {
+            if let Some(f) = &filter {
+                println!("(filtro ativo: \"{}\")", f);
+            }
+            for (idx, entry) in visible_entries.iter().enumerate() {
                 println!(
                     "  [{}] {} ({}) -> {}",
                     idx + 1,
@@ -107,7 +134,7 @@ fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
             }
         }
 
-        println!("\nEscolha um número para executar, 'r' para recarregar ou 'q' para sair.");
+        println!("\nComandos: número para executar, 'r' recarrega, 'q' sai, 's <texto>' filtra, 'id <capsule-id>' executa por ID.");
         print!("> ");
         io::stdout().flush()?;
 
@@ -119,6 +146,31 @@ fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
             println!("Saindo da UI.");
             break;
         } else if trimmed.eq_ignore_ascii_case("r") {
+            filter = None;
+            continue;
+        } else if let Some(rest) = trimmed.strip_prefix("s ") {
+            let value = rest.trim();
+            if value.is_empty() {
+                filter = None;
+                println!("Filtro removido.\n");
+            } else {
+                filter = Some(value.to_string());
+                println!("Filtro atualizado para \"{value}\".\n");
+            }
+            continue;
+        } else if let Some(rest) = trimmed.strip_prefix("id ") {
+            let id = rest.trim();
+            if id.is_empty() {
+                println!("Informe um ID após 'id'.");
+                continue;
+            }
+            println!("Executando cápsula com ID {id}...");
+            match load_manifest_from_registry(registry_path, id)
+                .and_then(|manifest| runtime::run_capsule(&manifest))
+            {
+                Ok(_) => println!("Execução concluída.\n"),
+                Err(err) => println!("Falha ao executar cápsula: {err}\n"),
+            }
             continue;
         }
 
@@ -130,12 +182,12 @@ fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
             }
         };
 
-        if idx == 0 || idx > entries.len() {
+        if idx == 0 || idx > visible_entries.len() {
             println!("Índice fora do intervalo.");
             continue;
         }
 
-        let selected = &entries[idx - 1];
+        let selected = visible_entries[idx - 1];
         println!("Executando cápsula {} ({})...", selected.name, selected.id);
 
         match load_manifest_from_registry(registry_path, &selected.id)
@@ -168,11 +220,12 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::List(args) => {
             let entries = list_registry(&args.registry)?;
+            let visible = filter_entries(&entries, &args.filter);
             if args.format == "json" {
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                println!("{}", serde_json::to_string_pretty(&visible)?);
             } else {
                 println!("Capsules em {}:", args.registry.display());
-                for entry in entries {
+                for entry in visible {
                     println!("- {} ({}) -> {}", entry.name, entry.id, entry.manifest);
                 }
             }
