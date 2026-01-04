@@ -6,13 +6,13 @@ fn default_path_buf() -> PathBuf {
     PathBuf::new()
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Permissions {
     pub notifications: bool,
     pub network: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CapsuleManifest {
     pub id: String,
     pub name: String,

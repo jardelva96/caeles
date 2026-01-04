@@ -3,13 +3,15 @@ mod runtime;
 
 use crate::manifest::CapsuleManifest;
 use clap::{Args as ClapArgs, Parser, Subcommand};
-use serde::Deserialize;
+use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
@@ -90,6 +92,20 @@ struct WebArgs {
     #[arg(long, default_value_t = 8080)]
     port: u16,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CapsuleState {
+    Stopped,
+    Running,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedCapsule {
+    manifest: CapsuleManifest,
+    state: CapsuleState,
+}
+
+static REGISTRY: OnceCell<Mutex<Vec<ManagedCapsule>>> = OnceCell::new();
 
 fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result<CapsuleManifest> {
     let text = fs::read_to_string(registry_path)?;
@@ -208,7 +224,7 @@ fn render_form() -> String {
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
-  <title>CAELES – Criar Manifesto de Cápsula</title>
+  <title>CAELES – Gerenciar Cápsulas (preview)</title>
   <style>
     :root {
       --bg: #0b1021;
@@ -288,8 +304,8 @@ fn render_form() -> String {
     <div class="row" style="margin-bottom:0.6rem;">
       <div class="badge">CAELES Runtime · Preview UI</div>
     </div>
-    <h1>Gerar manifesto de cápsula</h1>
-    <p>Preencha os campos e clique em <strong>Gerar manifest</strong>. Construa sua cápsula para <code>wasm32-unknown-unknown</code> e use o caminho gerado no campo <code>entry</code>.</p>
+    <h1>Gerenciar cápsulas (preview)</h1>
+    <p>Crie, inicie, pare ou remova cápsulas. Construir sempre para <code>wasm32-unknown-unknown</code> e aponte o <code>entry</code> para o .wasm gerado.</p>
 
     <div class="card">
       <form method="POST" action="/generate">
@@ -336,7 +352,65 @@ fn render_form() -> String {
         </div>
       </form>
     </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <div>
+          <h2 style="margin:0;">Cápsulas cadastradas (sessão atual)</h2>
+          <p class="muted" style="margin:0.1rem 0 0;">Lista mantida apenas em memória enquanto o runtime estiver rodando.</p>
+        </div>
+        <button class="secondary" type="button" onclick="loadCapsules()">Atualizar</button>
+      </div>
+      <div id="capsule-table" style="margin-top:1rem;" class="muted-card">Carregando...</div>
+    </div>
   </div>
+<script>
+async function loadCapsules() {
+  const table = document.getElementById('capsule-table');
+  table.textContent = 'Carregando...';
+  try {
+    const res = await fetch('/api/manifests');
+    if (!res.ok) throw new Error('Falha ao carregar');
+    const data = await res.json();
+    if (data.length === 0) {
+      table.textContent = 'Nenhuma cápsula cadastrada.';
+      return;
+    }
+    const rows = data.map(c => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 200px;gap:0.5rem;align-items:center;padding:0.65rem 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div><strong>${c.manifest.name}</strong></div>
+          <div class="muted">${c.manifest.id}</div>
+        </div>
+        <div>Versão: ${c.manifest.version}</div>
+        <div>Status: <span style="color:${c.state === 'Running' ? '#6be7b5' : '#9ba3b5'}">${c.state}</span></div>
+        <div class="row" style="gap:0.35rem; justify-content:flex-end;">
+          <button class="secondary" type="button" onclick="startCapsule('${c.manifest.id}')">Iniciar</button>
+          <button class="secondary" type="button" onclick="stopCapsule('${c.manifest.id}')">Parar</button>
+          <button class="secondary" type="button" onclick="deleteCapsule('${c.manifest.id}')">Excluir</button>
+        </div>
+      </div>
+    `).join('');
+    table.innerHTML = rows;
+  } catch (err) {
+    table.textContent = 'Erro ao carregar cápsulas.';
+  }
+}
+async function apiPost(url, body) {
+  const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!res.ok) throw new Error('erro');
+}
+async function startCapsule(id){ try { await apiPost('/api/manifests/start',{id}); loadCapsules(); } catch {} }
+async function stopCapsule(id){ try { await apiPost('/api/manifests/stop',{id}); loadCapsules(); } catch {} }
+async function deleteCapsule(id){
+  try {
+    const res = await fetch('/api/manifests?id='+encodeURIComponent(id), {method:'DELETE'});
+    if (!res.ok) throw new Error('erro');
+    loadCapsules();
+  } catch {}
+}
+window.addEventListener('load', loadCapsules);
+</script>
 </body>
 </html>
 "#
@@ -512,16 +586,127 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
     Ok((request, buffer))
 }
 
+fn get_registry() -> &'static Mutex<Vec<ManagedCapsule>> {
+    REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn parse_query(path: &str) -> (&str, Vec<(String, String)>) {
+    if let Some((p, q)) = path.split_once('?') {
+        let params = q
+            .split('&')
+            .filter(|s| !s.is_empty())
+            .filter_map(|pair| {
+                let mut it = pair.splitn(2, '=');
+                let k = it.next()?.to_string();
+                let v = it.next().unwrap_or_default().to_string();
+                Some((k, v))
+            })
+            .collect();
+        (p, params)
+    } else {
+        (path, Vec::new())
+    }
+}
+
+fn respond_json(stream: &mut TcpStream, status: &str, value: &serde_json::Value) -> io::Result<()> {
+    let body = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+    respond(stream, status, "application/json; charset=utf-8", &body)
+}
+
 fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     let (request, raw) = read_http_request(&mut stream)?;
     let mut lines = request.split("\r\n");
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
-    let path = parts.next().unwrap_or("/");
+    let raw_path = parts.next().unwrap_or("/");
+    let (path, query) = parse_query(raw_path);
 
     if method.eq_ignore_ascii_case("GET") && path == "/health" {
         respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok")?;
+        return Ok(());
+    }
+
+    // API: listar
+    if method.eq_ignore_ascii_case("GET") && path == "/api/manifests" {
+        let registry = get_registry().lock().unwrap();
+        let value = serde_json::json!(*registry);
+        respond_json(&mut stream, "200 OK", &value)?;
+        return Ok(());
+    }
+
+    // API: criar
+    if method.eq_ignore_ascii_case("POST") && path == "/api/manifests" {
+        let header_end = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|p| p + 4)
+            .unwrap_or(raw.len());
+        let body = &raw[header_end..];
+        let manifest: CapsuleManifest = serde_json::from_slice(body)?;
+        let mut registry = get_registry().lock().unwrap();
+        if registry.iter().any(|c| c.manifest.id == manifest.id) {
+            respond(
+                &mut stream,
+                "409 Conflict",
+                "text/plain; charset=utf-8",
+                "ID já existe",
+            )?;
+            return Ok(());
+        }
+        registry.push(ManagedCapsule {
+            manifest,
+            state: CapsuleState::Stopped,
+        });
+        respond(&mut stream, "201 Created", "text/plain; charset=utf-8", "created")?;
+        return Ok(());
+    }
+
+    // API: start/stop
+    if method.eq_ignore_ascii_case("POST") && (path == "/api/manifests/start" || path == "/api/manifests/stop") {
+        let header_end = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|p| p + 4)
+            .unwrap_or(raw.len());
+        let body = &raw[header_end..];
+        let payload: serde_json::Value = serde_json::from_slice(body)?;
+        let id = payload
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut registry = get_registry().lock().unwrap();
+        if let Some(item) = registry.iter_mut().find(|c| c.manifest.id == id) {
+            item.state = if path.ends_with("start") {
+                CapsuleState::Running
+            } else {
+                CapsuleState::Stopped
+            };
+            respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok")?;
+        } else {
+            respond(
+                &mut stream,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                "ID não encontrado",
+            )?;
+        }
+        return Ok(());
+    }
+
+    // API: delete
+    if method.eq_ignore_ascii_case("DELETE") && path == "/api/manifests" {
+        let id = query
+            .iter()
+            .find(|(k, _)| k == "id")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        let mut registry = get_registry().lock().unwrap();
+        let before = registry.len();
+        registry.retain(|c| c.manifest.id != id);
+        let status = if registry.len() < before { "200 OK" } else { "404 Not Found" };
+        respond(&mut stream, status, "text/plain; charset=utf-8", "ok")?;
         return Ok(());
     }
 
