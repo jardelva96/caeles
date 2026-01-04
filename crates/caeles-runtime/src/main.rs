@@ -1,5 +1,6 @@
 mod manifest;
 mod runtime;
+mod backend;
 
 use crate::manifest::CapsuleManifest;
 use clap::{Args as ClapArgs, Parser, Subcommand};
