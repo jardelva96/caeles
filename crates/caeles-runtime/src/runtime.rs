@@ -2,11 +2,7 @@ use crate::manifest::CapsuleManifest;
 use anyhow::Result;
 use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 
-fn read_string_from_memory(
-    mut caller: Caller<'_, ()>,
-    ptr: i32,
-    len: i32,
-) -> Option<String> {
+fn read_string_from_memory(mut caller: Caller<'_, ()>, ptr: i32, len: i32) -> Option<String> {
     let memory = match caller.get_export("memory") {
         Some(Extern::Memory(mem)) => mem,
         _ => {
@@ -35,10 +31,32 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
     let engine = Engine::default();
 
     let module_path = manifest.wasm_path();
+    if !module_path.exists() {
+        anyhow::bail!(
+            "Arquivo WASM não encontrado em '{}'. Compile a cápsula com \
+             `cargo build --target wasm32-unknown-unknown` e verifique o campo \
+             `entry` do manifest.",
+            module_path.display()
+        );
+    }
     println!("> Carregando cápsula: {}", module_path.display());
 
     // Carrega o módulo WASM da cápsula (wasm32-unknown-unknown)
     let module = Module::from_file(&engine, &module_path)?;
+
+    // O runtime atual não fornece WASI. Se a cápsula importar WASI, falhamos
+    // explicitamente com uma mensagem clara para evitar erros de link em tempo
+    // de execução e tentativas de usar wasmtime_wasi com APIs antigas.
+    if let Some(import) = module
+        .imports()
+        .find(|import| import.module().starts_with("wasi"))
+    {
+        anyhow::bail!(
+            "Cápsula requer WASI (módulo de importação: '{}'). Construa a cápsula \
+             para wasm32-unknown-unknown ou adicione suporte WASI ao runtime antes de executar.",
+            import.module()
+        );
+    }
 
     // Store sem estado (por enquanto não temos contexto customizado)
     let mut store = Store::new(&engine, ());

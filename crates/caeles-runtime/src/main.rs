@@ -1,11 +1,22 @@
+mod backend;
 mod manifest;
 mod runtime;
 
+use crate::backend::model::CapsuleStatus;
+use crate::backend::repository::CapsuleRepository;
+use crate::backend::state::AppState;
+use crate::backend::tasks::{PlannedTask, TaskInfo, TaskKind, TaskQueue};
 use crate::manifest::CapsuleManifest;
-use clap::Parser;
+use clap::{Args as ClapArgs, Parser, Subcommand};
+use once_cell::sync::OnceCell;
 use serde::Deserialize;
+use serde_json::json;
 use std::fs;
+use std::io::{self, Read, Write};
+use std::net::TcpListener;
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
@@ -20,6 +31,9 @@ struct RegistryEntry {
     about = "CAELES runtime: executa cápsulas a partir de manifest ou ID"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Caminho para o arquivo de manifest JSON da cápsula
     #[arg(long, conflicts_with = "capsule_id")]
     manifest: Option<PathBuf>,
@@ -33,6 +47,79 @@ struct Args {
     registry: PathBuf,
 }
 
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Interface inicial para criar um manifest de cápsula
+    Init(InitArgs),
+
+    /// Interface web para criar manifestos pelo navegador
+    Web(WebArgs),
+}
+
+#[derive(Debug, ClapArgs)]
+struct InitArgs {
+    /// Caminho de saída para o arquivo de manifest gerado
+    #[arg(long, default_value = "capsule.manifest.json")]
+    output: PathBuf,
+
+    /// ID da cápsula (ex.: com.caeles.examples.mycapsule)
+    #[arg(long)]
+    id: Option<String>,
+
+    /// Nome amigável da cápsula
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Versão semântica
+    #[arg(long, default_value = "0.1.0")]
+    version: String,
+
+    /// Caminho do wasm exportado pela cápsula (relativo ao manifest)
+    #[arg(long, default_value = "capsule.wasm")]
+    entry: String,
+
+    /// Permitir notificações (não será perguntado se informado)
+    #[arg(long)]
+    allow_notifications: bool,
+
+    /// Permitir rede (não será perguntado se informado)
+    #[arg(long)]
+    allow_network: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+struct WebArgs {
+    /// Host de binding do servidor HTTP
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// Porta de binding do servidor HTTP
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+
+    /// Caminho para persistir o estado das cápsulas/tarefas em disco
+    #[arg(long, default_value = "capsules/state.json")]
+    state_path: PathBuf,
+}
+
+static APP_STATE: OnceCell<AppState> = OnceCell::new();
+
+fn init_state(state_path: Option<PathBuf>) -> anyhow::Result<&'static AppState> {
+    APP_STATE.get_or_try_init(|| AppState::new(state_path))
+}
+
+fn state() -> &'static AppState {
+    APP_STATE
+        .get()
+        .expect("app state should be initialized before handling requests")
+}
+
+fn persist_state() {
+    if let Some(state) = APP_STATE.get() {
+        let _ = state.persist();
+    }
+}
+
 fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result<CapsuleManifest> {
     let text = fs::read_to_string(registry_path)?;
     let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
@@ -42,12 +129,851 @@ fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result
         .find(|e| e.id == id)
         .ok_or_else(|| anyhow::anyhow!(format!("Capsule id '{id}' não encontrado no registry")))?;
 
+    println!("> Registro encontrado: {} (id: {})", entry.name, entry.id);
+
     let manifest_path = Path::new(&entry.manifest);
     CapsuleManifest::load(manifest_path)
 }
 
+fn prompt_with_default(label: &str, default: Option<&str>) -> io::Result<String> {
+    if let Some(default) = default {
+        print!("{label} [{default}]: ");
+    } else {
+        print!("{label}: ");
+    }
+    io::stdout().flush()?;
+
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    let trimmed = buf.trim();
+    if trimmed.is_empty() {
+        Ok(default.unwrap_or("").to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn prompt_bool_with_default(label: &str, default: bool) -> io::Result<bool> {
+    let default_hint = if default { "Y/n" } else { "y/N" };
+    print!("{label} ({default_hint}): ");
+    io::stdout().flush()?;
+
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    let trimmed = buf.trim().to_lowercase();
+
+    match trimmed.as_str() {
+        "" => Ok(default),
+        "y" | "yes" | "s" | "sim" => Ok(true),
+        "n" | "no" | "não" | "nao" => Ok(false),
+        _ => Ok(default),
+    }
+}
+
+fn run_init_wizard(args: InitArgs) -> anyhow::Result<()> {
+    println!("=== CAELES – Criador inicial de manifest ===");
+
+    let id = if let Some(id) = args.id {
+        id
+    } else {
+        prompt_with_default("ID da cápsula (ex.: com.caeles.examples.mycapsule)", None)?
+    };
+
+    let name = if let Some(name) = args.name {
+        name
+    } else {
+        prompt_with_default("Nome da cápsula", None)?
+    };
+
+    let version = prompt_with_default("Versão", Some(&args.version))?;
+    let entry = prompt_with_default("Caminho do wasm (relativo ao manifest)", Some(&args.entry))?;
+
+    let allow_notifications = if args.allow_notifications {
+        true
+    } else {
+        prompt_bool_with_default("Permitir notificações (permissions.notifications)", false)?
+    };
+
+    let allow_network = if args.allow_network {
+        true
+    } else {
+        prompt_bool_with_default("Permitir rede (permissions.network)", false)?
+    };
+
+    let manifest = CapsuleManifest::from_parts(
+        id,
+        name,
+        version,
+        entry,
+        crate::manifest::Permissions {
+            notifications: allow_notifications,
+            network: allow_network,
+        },
+    );
+
+    let json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(&args.output, json)?;
+
+    println!("Manifest criado em: {}", args.output.display());
+    println!("Lembre-se de compilar sua cápsula para wasm32-unknown-unknown.");
+    Ok(())
+}
+
+fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &str) -> io::Result<()> {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes())
+}
+
+fn render_form() -> String {
+    r#"<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <title>CAELES – Console de Cápsulas (preview)</title>
+  <style>
+    :root {
+      --bg: #0b1021;
+      --card: #11162b;
+      --accent: #4cc2ff;
+      --text: #f4f6fb;
+      --muted: #9ba3b5;
+      --border: #1f2b4d;
+      --input: #0f1428;
+      --success: #6be7b5;
+      --warn: #ffc861;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: radial-gradient(120% 120% at 10% 20%, #10204d, #0b1021 60%);
+      color: var(--text);
+      font-family: "Inter", system-ui, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      padding: 2.5rem 1rem 3rem;
+      display: flex;
+      justify-content: center;
+    }
+    .shell { width: min(1100px, 100%); }
+    h1 { margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+    p { color: var(--muted); margin: 0.2rem 0 1rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      box-shadow: 0 20px 80px rgba(0,0,0,0.45);
+    }
+    label { display: block; margin-top: 0.9rem; font-weight: 600; font-size: 0.95rem; }
+    input[type=text] {
+      width: 100%; padding: 0.65rem 0.75rem;
+      background: var(--input); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      font-size: 0.95rem;
+    }
+    input[type=text]:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .checkbox { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .actions { margin-top: 1.25rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+    button {
+      padding: 0.75rem 1.2rem;
+      font-size: 1rem;
+      background: linear-gradient(135deg, var(--accent), #7de0ff);
+      border: none; color: #04122a; font-weight: 700;
+      border-radius: 12px; cursor: pointer;
+      box-shadow: 0 12px 30px rgba(76,194,255,0.25);
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    pre {
+      background: #0c1329;
+      border: 1px solid var(--border);
+      padding: 1rem;
+      overflow: auto;
+      border-radius: 10px;
+      color: #e8f0ff;
+    }
+    .hint { color: var(--muted); font-size: 0.9rem; }
+    .badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.65rem; border-radius: 999px; background: #10203d; color: var(--accent); font-weight: 600; font-size: 0.9rem; }
+    .row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+    .muted-card { background: #0c1329; border: 1px dashed var(--border); border-radius: 12px; padding: 0.75rem 1rem; color: var(--muted); font-size: 0.95rem; }
+    a { color: var(--accent); }
+    .pill { display:inline-flex; align-items:center; gap:0.35rem; padding:0.3rem 0.55rem; border-radius:999px; background:#0c1329; color:var(--muted); font-size:0.85rem; }
+    .status-badge { padding:0.3rem 0.6rem; border-radius:10px; font-size:0.85rem; font-weight:700; text-transform: capitalize; }
+    .status-running { background: rgba(107,231,181,0.12); color: var(--success); }
+    .status-stopped { background: rgba(155,163,181,0.15); color: var(--muted); }
+    .status-ready { background: rgba(76,194,255,0.12); color: var(--accent); }
+    .status-draft { background: rgba(255,200,97,0.12); color: var(--warn); }
+    .status-done { background: rgba(107,231,181,0.12); color: var(--success); }
+    .status-queued { background: rgba(255,200,97,0.12); color: var(--warn); }
+    .status-failed { background: rgba(255,120,120,0.15); color: #ff9b9b; }
+    .section-title { margin:0; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="row" style="margin-bottom:0.6rem;">
+      <div class="badge">CAELES Runtime · Console (preview)</div>
+    </div>
+    <h1>Gerenciar cápsulas (preview)</h1>
+    <p>Crie, cadastre, inicie, pare ou remova cápsulas. Construir sempre para <code>wasm32-unknown-unknown</code> e aponte o <code>entry</code> para o .wasm gerado.</p>
+
+    <div class="card">
+      <form method="POST" action="/generate">
+        <div class="grid">
+          <div>
+            <label>ID da cápsula</label>
+            <input id="field-id" type="text" name="id" placeholder="com.caeles.examples.mycapsule" required />
+            <div class="hint">Use um namespace reverso (ex.: com.empresa.app). </div>
+          </div>
+          <div>
+            <label>Nome</label>
+            <input id="field-name" type="text" name="name" placeholder="Minha Cápsula CAELES" required />
+            <div class="hint">Nome amigável exibido para o usuário.</div>
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:0.4rem;">
+          <div>
+            <label>Versão</label>
+            <input id="field-version" type="text" name="version" value="0.1.0" required />
+            <div class="hint">Versão semântica (ex.: 0.1.0).</div>
+          </div>
+          <div>
+            <label>Caminho do wasm (relativo ao manifest)</label>
+            <input id="field-entry" type="text" name="entry" value="capsule.wasm" required />
+            <div class="hint">Aponte para o .wasm gerado (ex.: target/wasm32-unknown-unknown/debug/minha.wasm).</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:0.8rem;">
+          <label class="checkbox">
+            <input id="field-notifications" type="checkbox" name="notifications" />
+            Permitir notificações
+          </label>
+          <label class="checkbox">
+            <input id="field-network" type="checkbox" name="network" />
+            Permitir rede
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Gerar manifest</button>
+          <button type="button" class="secondary" onclick="registerCapsule()">Cadastrar no backend</button>
+          <button type="button" class="secondary" onclick="enqueueBuild()">Enfileirar build (preview)</button>
+          <div class="muted-card">Dica: compile a cápsula com <code>cargo build --target wasm32-unknown-unknown</code> antes de executar no runtime.</div>
+        </div>
+      </form>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <div>
+          <h2 class="section-title">Cápsulas cadastradas</h2>
+          <p class="muted" style="margin:0.1rem 0 0;">Persistência opcional em arquivo (use <code>--state-path</code> para habilitar).</p>
+        </div>
+        <button class="secondary" type="button" onclick="loadCapsules()">Atualizar</button>
+      </div>
+      <div id="capsule-table" style="margin-top:1rem;" class="muted-card">Carregando...</div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <div>
+          <h2 class="section-title">Fila de tarefas (preview)</h2>
+          <p class="muted" style="margin:0.1rem 0 0;">Builds e operações são registradas aqui (simulação local).</p>
+        </div>
+        <button class="secondary" type="button" onclick="loadTasks()">Atualizar</button>
+      </div>
+      <div id="task-table" style="margin-top:1rem;" class="muted-card">Carregando...</div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h3 style="margin-top:0;">Dicas rápidas</h3>
+      <ul style="color:var(--muted); line-height:1.6;">
+        <li>Compile sempre para <code>wasm32-unknown-unknown</code> e aponte o <code>entry</code> para o .wasm gerado.</li>
+        <li>A persistência é feita em arquivo JSON quando o servidor é iniciado com <code>--state-path</code> (padrão: <code>capsules/state.json</code>).</li>
+        <li>As tarefas são simuladas: Start/Stop/Build apenas registram a intenção para o pipeline futuro.</li>
+      </ul>
+    </div>
+  </div>
+<script>
+function manifestFromForm() {
+  return {
+    id: document.getElementById('field-id').value.trim(),
+    name: document.getElementById('field-name').value.trim(),
+    version: document.getElementById('field-version').value.trim(),
+    entry: document.getElementById('field-entry').value.trim(),
+    permissions: {
+      notifications: document.getElementById('field-notifications').checked,
+      network: document.getElementById('field-network').checked
+    }
+  };
+}
+
+async function loadCapsules() {
+  const table = document.getElementById('capsule-table');
+  table.textContent = 'Carregando...';
+  try {
+    const res = await fetch('/api/manifests');
+    if (!res.ok) throw new Error('Falha ao carregar');
+    const data = await res.json();
+    if (!data || data.length === 0) {
+      table.textContent = 'Nenhuma cápsula cadastrada.';
+      return;
+    }
+    const rows = data.map(c => `
+      <div style="display:grid;grid-template-columns:1.1fr 0.7fr 0.8fr 0.8fr 220px;gap:0.5rem;align-items:center;padding:0.65rem 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div><strong>${(c.manifest && c.manifest.name) || (c.meta && c.meta.name) || ''}</strong></div>
+          <div class="muted">${(c.manifest && c.manifest.id) || (c.meta && c.meta.id) || ''}</div>
+        </div>
+        <div>Versão: ${(c.manifest && c.manifest.version) || (c.meta && c.meta.version) || ''}</div>
+        <div><span class="status-badge ${badgeClass(c.meta && c.meta.status)}">${(c.meta && c.meta.status) || 'draft'}</span></div>
+        <div class="muted">Entrada: ${(c.manifest && c.manifest.entry) || (c.meta && c.meta.entry) || ''}</div>
+        <div class="row" style="gap:0.35rem; justify-content:flex-end;">
+          <button class="secondary" type="button" onclick="startCapsule('${c.manifest.id}')">Iniciar</button>
+          <button class="secondary" type="button" onclick="stopCapsule('${c.manifest.id}')">Parar</button>
+          <button class="secondary" type="button" onclick="deleteCapsule('${c.manifest.id}')">Excluir</button>
+        </div>
+      </div>
+    `).join('');
+    table.innerHTML = rows;
+  } catch (err) {
+    table.textContent = 'Erro ao carregar cápsulas.';
+  }
+}
+
+function badgeClass(status) {
+  const s = (status || '').toLowerCase();
+  if (s === 'running') return 'status-badge status-running';
+  if (s === 'stopped') return 'status-badge status-stopped';
+  if (s === 'ready') return 'status-badge status-ready';
+  if (s === 'done') return 'status-badge status-done';
+  if (s === 'queued') return 'status-badge status-queued';
+  if (s === 'failed') return 'status-badge status-failed';
+  return 'status-badge status-draft';
+}
+
+async function apiPost(url, body) {
+  const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!res.ok) throw new Error('erro');
+}
+async function startCapsule(id){ try { await apiPost('/api/manifests/start',{id}); loadCapsules(); loadTasks(); } catch {} }
+async function stopCapsule(id){ try { await apiPost('/api/manifests/stop',{id}); loadCapsules(); loadTasks(); } catch {} }
+async function deleteCapsule(id){
+  try {
+    const res = await fetch('/api/manifests?id='+encodeURIComponent(id), {method:'DELETE'});
+    if (!res.ok) throw new Error('erro');
+    loadCapsules();
+    loadTasks();
+  } catch {}
+}
+
+async function registerCapsule(){
+  const manifest = manifestFromForm();
+  const btns = document.querySelectorAll('button');
+  btns.forEach(b => b.disabled = true);
+  try {
+    const res = await fetch('/api/manifests', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(manifest)});
+    if (!res.ok) throw new Error('Falha ao cadastrar');
+  } catch (e) {
+    alert('Não foi possível cadastrar a cápsula.');
+  } finally {
+    btns.forEach(b => b.disabled = false);
+    loadCapsules();
+  }
+}
+
+async function enqueueBuild() {
+  const manifest = manifestFromForm();
+  if (!manifest.id) { alert('Informe o ID da cápsula antes de enfileirar.'); return; }
+  try {
+    await apiPost('/api/tasks', { id: manifest.id, kind: 'build', payload: { entry: manifest.entry } });
+    loadTasks();
+  } catch {
+    alert('Não foi possível enfileirar a tarefa.');
+  }
+}
+
+async function loadTasks() {
+  const table = document.getElementById('task-table');
+  table.textContent = 'Carregando...';
+  try {
+    const res = await fetch('/api/tasks');
+    if (!res.ok) throw new Error('Falha ao carregar');
+    const data = await res.json();
+    if (!data || data.length === 0) { table.textContent = 'Nenhuma tarefa registrada.'; return; }
+    const rows = data.map(t => `
+      <div style="display:grid;grid-template-columns:1fr 0.8fr 0.8fr 1fr;gap:0.6rem;align-items:center;padding:0.55rem 0;border-bottom:1px solid var(--border);">
+        <div><div><strong>${t.task.kind}</strong></div><div class="muted">${t.task.capsule_id}</div></div>
+        <div><span class="status-badge ${badgeClass(t.state)}">${t.state}</span></div>
+        <div class="muted">Atualizado: ${new Date(t.updated_at * 1000).toLocaleTimeString()}</div>
+        <div class="muted">${t.detail || ''}</div>
+      </div>
+    `).join('');
+    table.innerHTML = rows;
+  } catch (err) {
+    table.textContent = 'Erro ao carregar tarefas.';
+  }
+}
+
+window.addEventListener('load', loadCapsules);
+window.addEventListener('load', loadTasks);
+</script>
+</body>
+</html>
+"#
+    .to_string()
+}
+
+fn parse_form(body: &str) -> CapsuleManifest {
+    let mut id = String::new();
+    let mut name = String::new();
+    let mut version = "0.1.0".to_string();
+    let mut entry = "capsule.wasm".to_string();
+    let mut notifications = false;
+    let mut network = false;
+
+    for pair in body.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or("");
+        let value = parts.next().map(|v| url_decode(v)).unwrap_or_default();
+
+        match key {
+            "id" => id = value,
+            "name" => name = value,
+            "version" => version = value,
+            "entry" => entry = value,
+            "notifications" => notifications = true,
+            "network" => network = true,
+            _ => {}
+        }
+    }
+
+    CapsuleManifest::from_parts(
+        id,
+        name,
+        version,
+        entry,
+        crate::manifest::Permissions {
+            notifications,
+            network,
+        },
+    )
+}
+
+fn url_decode(input: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut chars = input.as_bytes().iter().copied().peekable();
+
+    while let Some(b) = chars.next() {
+        match b {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let hi = chars.next();
+                let lo = chars.next();
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    if let (Some(hi_v), Some(lo_v)) = (from_hex(hi), from_hex(lo)) {
+                        bytes.push((hi_v << 4) | lo_v);
+                        continue;
+                    }
+                }
+                bytes.push(b'%');
+            }
+            _ => bytes.push(b),
+        }
+    }
+
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn render_manifest_result(manifest: &CapsuleManifest) -> anyhow::Result<String> {
+    let json = serde_json::to_string_pretty(manifest)?;
+    let json_escaped = html_escape(&json);
+    let suggested_file = "capsule.manifest.json";
+
+    let cli_example = html_escape(&format!(
+        "cargo run -p caeles-runtime -- --manifest {}",
+        suggested_file
+    ));
+
+    let html = format!(
+        r#"<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <title>Manifesto gerado</title>
+  <style>
+    body {{ font-family: "Inter", system-ui, sans-serif; margin: 0; padding: 2rem 1rem; display: flex; justify-content: center; background: #0b1021; color: #f4f6fb; }}
+    .card {{ background: #11162b; border: 1px solid #1f2b4d; border-radius: 14px; padding: 1.5rem; width: min(880px, 100%); box-shadow: 0 20px 80px rgba(0,0,0,0.45); }}
+    h1 {{ margin-top: 0; letter-spacing: -0.02em; }}
+    pre {{ background: #0c1329; padding: 1rem; overflow: auto; border-radius: 10px; border: 1px solid #1f2b4d; color: #e8f0ff; }}
+    .button {{ display: inline-block; margin-top: 1rem; padding: 0.6rem 1rem; background: linear-gradient(135deg, #4cc2ff, #7de0ff); color: #04122a; text-decoration: none; border-radius: 10px; font-weight: 700; }}
+    .row {{ display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }}
+    .muted {{ color: #9ba3b5; }}
+    code {{ background: #0c1329; padding: 0.2rem 0.4rem; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Manifesto gerado</h1>
+    <p class="muted">Salve como <code>{suggested_file}</code> e rode o runtime apontando para ele.</p>
+    <div class="row">
+      <a class="button" href="/" aria-label="Voltar ao formulário">Voltar</a>
+      <a class="button" href="data:application/json;charset=utf-8,{json_escaped}" download="{suggested_file}" aria-label="Baixar manifest JSON">Baixar JSON</a>
+    </div>
+    <div style="margin-top:1rem;">
+      <div class="muted">Exemplo de uso:</div>
+      <pre>{cli_example}</pre>
+    </div>
+    <div style="margin-top:1rem;">
+      <div class="muted">Conteúdo do manifest:</div>
+      <pre>{json_escaped}</pre>
+    </div>
+  </div>
+</body>
+</html>"#,
+    );
+    Ok(html)
+}
+
+fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let mut buffer = Vec::new();
+    let mut header_end: Option<usize> = None;
+    let mut content_length: Option<usize> = None;
+    let mut temp = [0u8; 4096];
+
+    while buffer.len() < 64 * 1024 {
+        let n = stream.read(&mut temp)?;
+        if n == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&temp[..n]);
+
+        if header_end.is_none() {
+            if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = Some(pos + 4);
+                let headers = String::from_utf8_lossy(&buffer[..pos]);
+                for line in headers.lines() {
+                    let line = line.trim();
+                    if let Some(rest) = line.strip_prefix("Content-Length:") {
+                        if let Ok(len) = rest.trim().parse::<usize>() {
+                            content_length = Some(len);
+                        }
+                    }
+                }
+
+                // Se não houver Content-Length, estamos tratando um GET/HEAD simples:
+                // podemos parar de ler após o fim do cabeçalho.
+                if content_length.is_none() {
+                    break;
+                }
+            }
+        }
+
+        if let (Some(end), Some(len)) = (header_end, content_length) {
+            if buffer.len() >= end + len {
+                break;
+            }
+        }
+    }
+
+    let request = String::from_utf8_lossy(&buffer).to_string();
+    Ok((request, buffer))
+}
+
+fn request_body(raw: &[u8]) -> &[u8] {
+    let header_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(raw.len());
+    &raw[header_end..]
+}
+
+fn parse_query(path: &str) -> (&str, Vec<(String, String)>) {
+    if let Some((p, q)) = path.split_once('?') {
+        let params = q
+            .split('&')
+            .filter(|s| !s.is_empty())
+            .filter_map(|pair| {
+                let mut it = pair.splitn(2, '=');
+                let k = it.next()?.to_string();
+                let v = it.next().unwrap_or_default().to_string();
+                Some((k, v))
+            })
+            .collect();
+        (p, params)
+    } else {
+        (path, Vec::new())
+    }
+}
+
+fn respond_json(stream: &mut TcpStream, status: &str, value: &serde_json::Value) -> io::Result<()> {
+    let body = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+    respond(stream, status, "application/json; charset=utf-8", &body)
+}
+
+fn apply_state_transition(
+    id: &str,
+    target: CapsuleStatus,
+    kind: TaskKind,
+) -> anyhow::Result<TaskInfo> {
+    let st = state();
+    st.repo.update_status(id, target)?;
+    let planned = PlannedTask {
+        capsule_id: id.to_string(),
+        kind,
+        payload: json!({}),
+    };
+    let task = st.tasks.enqueue(planned)?;
+    st.tasks
+        .mark_running(&task.id, Some("Operação registrada (preview).".to_string()))?;
+    st.tasks.mark_done(
+        &task.id,
+        Some("Operação concluída (simulação).".to_string()),
+    )?;
+    persist_state();
+    Ok(st
+        .tasks
+        .list()?
+        .into_iter()
+        .find(|t| t.id == task.id)
+        .unwrap_or(task))
+}
+
+fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
+    let (request, raw) = read_http_request(&mut stream)?;
+    let mut lines = request.split("\r\n");
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let raw_path = parts.next().unwrap_or("/");
+    let (path, query) = parse_query(raw_path);
+
+    if method.eq_ignore_ascii_case("GET") && path == "/health" {
+        respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok")?;
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("GET") && path == "/api/manifests" {
+        let records = state().repo.list()?;
+        respond_json(&mut stream, "200 OK", &json!(records))?;
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("POST") && path == "/api/manifests" {
+        let body = request_body(&raw);
+        let manifest: CapsuleManifest = serde_json::from_slice(body)?;
+        match state().repo.create_from_manifest(manifest) {
+            Ok(record) => {
+                persist_state();
+                respond_json(&mut stream, "201 Created", &json!(record))?;
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                let status = if msg.contains("já cadastrada") {
+                    "409 Conflict"
+                } else {
+                    "400 Bad Request"
+                };
+                respond(&mut stream, status, "text/plain; charset=utf-8", &msg)?;
+            }
+        }
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("POST")
+        && (path == "/api/manifests/start" || path == "/api/manifests/stop")
+    {
+        let body = request_body(&raw);
+        let payload: serde_json::Value = serde_json::from_slice(body)?;
+        let id = payload
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if id.is_empty() {
+            respond(
+                &mut stream,
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "Campo 'id' é obrigatório",
+            )?;
+            return Ok(());
+        }
+
+        let target = if path.ends_with("start") {
+            CapsuleStatus::Running
+        } else {
+            CapsuleStatus::Stopped
+        };
+        let kind = if path.ends_with("start") {
+            TaskKind::Start
+        } else {
+            TaskKind::Stop
+        };
+
+        match apply_state_transition(&id, target, kind) {
+            Ok(task) => respond_json(&mut stream, "200 OK", &json!(task))?,
+            Err(err) => respond(
+                &mut stream,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                &format!("Erro: {err}"),
+            )?,
+        }
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("DELETE") && path == "/api/manifests" {
+        let id = query
+            .iter()
+            .find(|(k, _)| k == "id")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        match state().repo.delete(&id) {
+            Ok(_) => {
+                persist_state();
+                respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok")?;
+            }
+            Err(_) => respond(
+                &mut stream,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                "ID não encontrado",
+            )?,
+        }
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("GET") && path == "/api/tasks" {
+        let tasks = state().tasks.list()?;
+        respond_json(&mut stream, "200 OK", &json!(tasks))?;
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("POST") && path == "/api/tasks" {
+        #[derive(Deserialize)]
+        struct TaskRequest {
+            id: String,
+            kind: TaskKind,
+            #[serde(default)]
+            payload: serde_json::Value,
+        }
+
+        let body = request_body(&raw);
+        let req: TaskRequest = serde_json::from_slice(body)?;
+        if req.id.trim().is_empty() {
+            respond(
+                &mut stream,
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "Campo 'id' é obrigatório",
+            )?;
+            return Ok(());
+        }
+
+        let st = state();
+        let planned = PlannedTask {
+            capsule_id: req.id.clone(),
+            kind: req.kind,
+            payload: req.payload,
+        };
+        let task = st.tasks.enqueue(planned)?;
+        st.tasks
+            .mark_running(&task.id, Some("Em execução (simulada).".to_string()))?;
+        st.tasks
+            .mark_done(&task.id, Some("Concluída (simulação).".to_string()))?;
+        persist_state();
+        respond_json(&mut stream, "201 Created", &json!(task))?;
+        return Ok(());
+    }
+
+    if method.eq_ignore_ascii_case("POST") && path == "/generate" {
+        let body = request_body(&raw);
+        let body_str = String::from_utf8_lossy(body);
+        let manifest = parse_form(&body_str);
+        let html = render_manifest_result(&manifest)?;
+        respond(&mut stream, "200 OK", "text/html; charset=utf-8", &html)?;
+        return Ok(());
+    }
+
+    if !method.eq_ignore_ascii_case("GET") || path != "/" {
+        respond(
+            &mut stream,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "Rota não encontrada. Use GET / ou POST /generate.",
+        )?;
+        return Ok(());
+    }
+
+    let html = render_form();
+    respond(&mut stream, "200 OK", "text/html; charset=utf-8", &html)?;
+    Ok(())
+}
+
+fn run_web_server(args: WebArgs) -> anyhow::Result<()> {
+    let _ = init_state(Some(args.state_path.clone()))?;
+    let addr = format!("{}:{}", args.host, args.port);
+    println!("> Servindo interface web em http://{addr} (Ctrl+C para sair)");
+    let listener = TcpListener::bind(&addr)?;
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                if let Err(err) = handle_connection(stream) {
+                    eprintln!("[web] erro atendendo requisição: {err}");
+                }
+            }
+            Err(err) => {
+                eprintln!("[web] erro de conexão: {err}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if let Some(Command::Init(init_args)) = args.command {
+        return run_init_wizard(init_args);
+    }
+
+    if let Some(Command::Web(web_args)) = args.command {
+        return run_web_server(web_args);
+    }
 
     let manifest = if let Some(path) = args.manifest {
         // Caminho direto para o manifest
@@ -58,6 +984,15 @@ fn main() -> anyhow::Result<()> {
     } else {
         anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>");
     };
+
+    println!(
+        "> Manifest carregado: {} v{} (id: {})",
+        manifest.name, manifest.version, manifest.id
+    );
+    println!(
+        "> Permissões: notifications={}, network={}",
+        manifest.permissions.notifications, manifest.permissions.network
+    );
 
     runtime::run_capsule(&manifest)
 }

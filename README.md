@@ -8,7 +8,7 @@
 
 ## 🔍 O que é o CAELES?
 
-O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos compilados para **WASM/WASI** – de forma:
+O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos compilados para **WASM** – de forma:
 
 - 🔒 isolada (sandbox WebAssembly)  
 - 📱 pensada primeiro para **Android**  
@@ -25,7 +25,7 @@ Você escreve a lógica da cápsula (por exemplo em Rust), gera um `.wasm`, desc
 Uma **cápsula CAELES** é a unidade básica do sistema.  
 Ela é composta por:
 
-- `capsule.wasm` – binário WebAssembly (`wasm32-wasi`)  
+- `capsule.wasm` – binário WebAssembly (`wasm32-unknown-unknown`)  
 - `capsule.manifest.json` – arquivo declarando como e com quais permissões ela roda
 
 Exemplo **simplificado** de manifesto (formato ainda em evolução):
@@ -55,7 +55,7 @@ lê e valida o manifesto
 
 localiza e carrega o .wasm
 
-prepara o ambiente WASI (args, env, I/O, filesystem sandbox)
+fornece as funções de host do CAELES (log, notify, etc.)
 
 aplica permissões conforme o manifesto
 
@@ -75,7 +75,7 @@ A implementação é em Rust, usando WebAssembly/WASI como base.
                │
                ▼
         [ Cápsula WASM ]
-          (wasm32-wasi)
+   (wasm32-unknown-unknown)
 No Android, o CAELES deve ser embutido em um app host, que chama o núcleo nativo.
 
 Em desktop, o núcleo pode ser usado para desenvolvimento, debug e testes de cápsulas.
@@ -87,7 +87,7 @@ Objetivos desta fase:
 
 definir o conceito de cápsula CAELES v0
 
-experimentar o núcleo em Rust executando uma cápsula simples (wasm32-wasi)
+experimentar o núcleo em Rust executando uma cápsula simples (wasm32-unknown-unknown)
 
 preparar o caminho para uma futura integração com Android
 
@@ -98,11 +98,11 @@ Fluxo esperado para desenvolvedores:
 
 Escrever a cápsula em Rust (ou outra linguagem que compile para WASM):
 
-rustup target add wasm32-wasi
-cargo build --target wasm32-wasi
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown
 Isso gera algo como:
 
-target/wasm32-wasi/debug/minha-capsula.wasm
+target/wasm32-unknown-unknown/debug/minha-capsula.wasm
 Criar um manifesto CAELES apontando para o .wasm:
 
 ```json
@@ -121,9 +121,69 @@ Criar um manifesto CAELES apontando para o .wasm:
 ```
 Executar com o núcleo CAELES (quando disponível):
 
-
-caeles run path/para/capsule.manifest.json
+caeles-runtime --manifest path/para/capsule.manifest.json
 Ou, no Android, via um app host que lista e executa cápsulas.
+
+> Dica rápida: o placeholder `<manifest>` deve ser substituído por um caminho real,
+> por exemplo: `cargo run -p caeles-runtime -- --manifest capsules/hello-capsule/capsule.manifest.json`.
+
+### Interface inicial para criar manifest
+
+Use o assistente embutido para gerar rapidamente um manifesto compatível com o runtime:
+
+```
+cargo run -p caeles-runtime -- init --output capsule.manifest.json
+```
+
+O comando abre um passo a passo interativo pedindo ID, nome, versão, caminho do wasm (alvo `wasm32-unknown-unknown`) e permissões de notificações/rede. Você também pode preencher flags diretamente, por exemplo:
+
+```
+cargo run -p caeles-runtime -- init --id com.caeles.demo --name "Demo" --allow-notifications
+```
+
+### Interface web para criar manifest
+
+Também é possível criar manifestos via navegador com a interface web mínima embutida no runtime:
+
+```
+cargo run -p caeles-runtime -- web --host 127.0.0.1 --port 8080
+```
+
+Abra o endereço informado (por padrão http://127.0.0.1:8080), preencha os campos e copie o JSON gerado. Ele já segue o formato esperado pelo runtime (alvo `wasm32-unknown-unknown` e permissões de host).
+
+### Console web “Docker-like” (preview)
+
+O subcomando `web` também expõe um console leve para gerenciar cápsulas e tarefas em memória:
+
+- **Cadastrar** manifestos no backend pelo botão “Cadastrar no backend”.
+- **Listar** cápsulas já registradas, com status (draft/ready/running/stopped) e entry.
+- **Start/Stop/Delete**: ações simuladas que mudam o status e registram uma tarefa.
+- **Fila de tarefas**: toda operação gera uma entrada em `/api/tasks` (estado atual: simulação/local).
+- **Persistência opcional**: use `--state-path capsules/state.json` (padrão) para salvar/recuperar estado em disco.
+- Endpoints expostos:
+  - `GET /api/manifests`, `POST /api/manifests`, `POST /api/manifests/start|stop`, `DELETE /api/manifests?id=<id>`
+  - `GET /api/tasks`, `POST /api/tasks` (payload: `{ "id": "<capsule-id>", "kind": "build|start|stop|publish|deploy|remove" }`)
+  - `GET /health`
+
+> O backend ainda não executa WASM nas ações do console; os start/stop/build são registrados para planejamento do pipeline futuro.
+
+### Compilando cápsulas no Windows
+
+Os erros de link envolvendo `host_log` e `host_notify` acontecem quando a cápsula é
+compilada como DLL nativa (alvo padrão). A cápsula precisa ser gerada como WASM:
+
+```
+rustup target add wasm32-unknown-unknown
+cargo build -p hello-capsule --target wasm32-unknown-unknown
+cargo build -p logger-capsule --target wasm32-unknown-unknown
+```
+
+Depois de gerar o `.wasm`, aponte o campo `entry` do manifest para o caminho correto,
+por exemplo:
+
+```
+capsules/hello-capsule/target/wasm32-unknown-unknown/debug/hello_capsule.wasm
+```
 
 🤝 Contribuição
 No momento, o foco é:
@@ -133,5 +193,10 @@ consolidar os conceitos (cápsula, manifesto, núcleo)
 evoluir o código inicial em Rust
 
 documentar decisões e ideias neste repositório
+
+> ℹ️ **Estado atual:** o runtime CAELES ainda **não** embute WASI. As cápsulas devem ser
+> compiladas para `wasm32-unknown-unknown` e usar apenas as funções de host expostas
+> pelo runtime (ex.: `host_log`, `host_notify`). Caso precise de WASI, será necessário
+> estender o runtime com o suporte adequado.
 
 Sugestões de arquitetura, formato de manifesto, nomes de conceitos e ideias de cápsulas são bem-vindas via issues.
