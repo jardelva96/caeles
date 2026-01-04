@@ -151,6 +151,22 @@ cargo run -p caeles-runtime -- web --host 127.0.0.1 --port 8080
 
 Abra o endereço informado (por padrão http://127.0.0.1:8080), preencha os campos e copie o JSON gerado. Ele já segue o formato esperado pelo runtime (alvo `wasm32-unknown-unknown` e permissões de host).
 
+### Console web “Docker-like” (preview)
+
+O subcomando `web` também expõe um console leve para gerenciar cápsulas e tarefas em memória:
+
+- **Cadastrar** manifestos no backend pelo botão “Cadastrar no backend”.
+- **Listar** cápsulas já registradas, com status (draft/ready/running/stopped) e entry.
+- **Start/Stop/Delete**: ações simuladas que mudam o status e registram uma tarefa.
+- **Fila de tarefas**: toda operação gera uma entrada em `/api/tasks` (estado atual: simulação/local).
+- **Persistência opcional**: use `--state-path capsules/state.json` (padrão) para salvar/recuperar estado em disco.
+- Endpoints expostos:
+  - `GET /api/manifests`, `POST /api/manifests`, `POST /api/manifests/start|stop`, `DELETE /api/manifests?id=<id>`
+  - `GET /api/tasks`, `POST /api/tasks` (payload: `{ "id": "<capsule-id>", "kind": "build|start|stop|publish|deploy|remove" }`)
+  - `GET /health`
+
+> O backend ainda não executa WASM nas ações do console; os start/stop/build são registrados para planejamento do pipeline futuro.
+
 ### Compilando cápsulas no Windows
 
 Os erros de link envolvendo `host_log` e `host_notify` acontecem quando a cápsula é

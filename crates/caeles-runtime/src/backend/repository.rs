@@ -7,6 +7,7 @@ use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapsuleRecord {
+    pub manifest: CapsuleManifest,
     pub meta: CapsuleMetadata,
     pub last_log: Option<CapsuleLogEntry>,
     pub artifacts: Vec<CapsuleArtifact>,
@@ -32,6 +33,18 @@ impl InMemoryRepository {
         Self::default()
     }
 
+    pub fn replace_all(&self, records: Vec<CapsuleRecord>) {
+        let mut map = self.map();
+        map.clear();
+        for record in records {
+            map.insert(record.meta.id.clone(), record);
+        }
+    }
+
+    pub fn snapshot(&self) -> Vec<CapsuleRecord> {
+        self.map().values().cloned().collect()
+    }
+
     fn map(&self) -> MutexGuard<'_, HashMap<String, CapsuleRecord>> {
         self.inner.lock().expect("mutex poisoned")
     }
@@ -43,13 +56,15 @@ impl CapsuleRepository for InMemoryRepository {
         if map.contains_key(&manifest.id) {
             anyhow::bail!("Cápsula com id '{}' já cadastrada", manifest.id);
         }
-        let meta = CapsuleMetadata::new(
+        let mut meta = CapsuleMetadata::new(
             manifest.id.clone(),
             manifest.name.clone(),
             manifest.version.clone(),
             PathBuf::from(&manifest.entry),
         );
+        meta.status = CapsuleStatus::Ready;
         let record = CapsuleRecord {
+            manifest: manifest.clone(),
             meta,
             last_log: None,
             artifacts: Vec::new(),
@@ -80,8 +95,10 @@ impl CapsuleRepository for InMemoryRepository {
 
     fn delete(&self, id: &str) -> anyhow::Result<()> {
         let mut map = self.map();
-        map.remove(id);
-        Ok(())
+        if map.remove(id).is_some() {
+            return Ok(());
+        }
+        anyhow::bail!("Cápsula '{}' não encontrada", id);
     }
 
     fn append_log(&self, log: CapsuleLogEntry) -> anyhow::Result<()> {

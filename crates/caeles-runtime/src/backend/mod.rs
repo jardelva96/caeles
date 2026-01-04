@@ -7,4 +7,8 @@ pub mod model;
 #[allow(dead_code)]
 pub mod repository;
 #[allow(dead_code)]
+pub mod state;
+#[allow(dead_code)]
+pub mod storage;
+#[allow(dead_code)]
 pub mod tasks;
