@@ -210,37 +210,133 @@ fn render_form() -> String {
   <meta charset="utf-8"/>
   <title>CAELES – Criar Manifesto de Cápsula</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 640px; line-height: 1.5; }
-    label { display: block; margin-top: 1rem; font-weight: 600; }
-    input[type=text] { width: 100%; padding: 0.5rem; }
-    .actions { margin-top: 1.5rem; }
-    button { padding: 0.6rem 1rem; font-size: 1rem; }
-    pre { background: #f6f8fa; padding: 1rem; overflow: auto; }
+    :root {
+      --bg: #0b1021;
+      --card: #11162b;
+      --accent: #4cc2ff;
+      --text: #f4f6fb;
+      --muted: #9ba3b5;
+      --border: #1f2b4d;
+      --input: #0f1428;
+      --success: #6be7b5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: radial-gradient(120% 120% at 10% 20%, #10204d, #0b1021 60%);
+      color: var(--text);
+      font-family: "Inter", system-ui, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      padding: 2rem 1rem 3rem;
+      display: flex;
+      justify-content: center;
+    }
+    .shell {
+      width: min(960px, 100%);
+    }
+    h1 { margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+    p { color: var(--muted); margin: 0.2rem 0 1rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      box-shadow: 0 20px 80px rgba(0,0,0,0.45);
+    }
+    label { display: block; margin-top: 0.9rem; font-weight: 600; font-size: 0.95rem; }
+    input[type=text] {
+      width: 100%; padding: 0.65rem 0.75rem;
+      background: var(--input); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      font-size: 0.95rem;
+    }
+    input[type=text]:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .checkbox { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .actions { margin-top: 1.25rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+    button {
+      padding: 0.75rem 1.2rem;
+      font-size: 1rem;
+      background: linear-gradient(135deg, var(--accent), #7de0ff);
+      border: none; color: #04122a; font-weight: 700;
+      border-radius: 12px; cursor: pointer;
+      box-shadow: 0 12px 30px rgba(76,194,255,0.25);
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    pre {
+      background: #0c1329;
+      border: 1px solid var(--border);
+      padding: 1rem;
+      overflow: auto;
+      border-radius: 10px;
+      color: #e8f0ff;
+    }
+    .hint { color: var(--muted); font-size: 0.9rem; }
+    .badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.65rem; border-radius: 999px; background: #10203d; color: var(--accent); font-weight: 600; font-size: 0.9rem; }
+    .row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+    .muted-card { background: #0c1329; border: 1px dashed var(--border); border-radius: 12px; padding: 0.75rem 1rem; color: var(--muted); font-size: 0.95rem; }
+    a { color: var(--accent); }
   </style>
 </head>
 <body>
-  <h1>CAELES – Criar Manifesto de Cápsula</h1>
-  <p>Preencha os campos abaixo e clique em <strong>Gerar manifest</strong>. O runtime atual espera cápsulas construídas para <code>wasm32-unknown-unknown</code> e expõe as funções de host (log, notify).</p>
-  <form method="POST" action="/generate">
-    <label>ID da cápsula</label>
-    <input type="text" name="id" placeholder="com.caeles.examples.mycapsule" required />
-
-    <label>Nome</label>
-    <input type="text" name="name" placeholder="Minha Cápsula CAELES" required />
-
-    <label>Versão</label>
-    <input type="text" name="version" value="0.1.0" required />
-
-    <label>Caminho do wasm (relativo ao manifest)</label>
-    <input type="text" name="entry" value="capsule.wasm" required />
-
-    <label><input type="checkbox" name="notifications" /> Permitir notificações</label>
-    <label><input type="checkbox" name="network" /> Permitir rede</label>
-
-    <div class="actions">
-      <button type="submit">Gerar manifest</button>
+  <div class="shell">
+    <div class="row" style="margin-bottom:0.6rem;">
+      <div class="badge">CAELES Runtime · Preview UI</div>
     </div>
-  </form>
+    <h1>Gerar manifesto de cápsula</h1>
+    <p>Preencha os campos e clique em <strong>Gerar manifest</strong>. Construa sua cápsula para <code>wasm32-unknown-unknown</code> e use o caminho gerado no campo <code>entry</code>.</p>
+
+    <div class="card">
+      <form method="POST" action="/generate">
+        <div class="grid">
+          <div>
+            <label>ID da cápsula</label>
+            <input type="text" name="id" placeholder="com.caeles.examples.mycapsule" required />
+            <div class="hint">Use um namespace reverso (ex.: com.empresa.app). </div>
+          </div>
+          <div>
+            <label>Nome</label>
+            <input type="text" name="name" placeholder="Minha Cápsula CAELES" required />
+            <div class="hint">Nome amigável exibido para o usuário.</div>
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:0.4rem;">
+          <div>
+            <label>Versão</label>
+            <input type="text" name="version" value="0.1.0" required />
+            <div class="hint">Versão semântica (ex.: 0.1.0).</div>
+          </div>
+          <div>
+            <label>Caminho do wasm (relativo ao manifest)</label>
+            <input type="text" name="entry" value="capsule.wasm" required />
+            <div class="hint">Aponte para o .wasm gerado (ex.: target/wasm32-unknown-unknown/debug/minha.wasm).</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:0.8rem;">
+          <label class="checkbox">
+            <input type="checkbox" name="notifications" />
+            Permitir notificações
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" name="network" />
+            Permitir rede
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Gerar manifest</button>
+          <div class="muted-card">Dica: compile a cápsula com <code>cargo build --target wasm32-unknown-unknown</code> antes de executar no runtime.</div>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>
 "#
@@ -322,6 +418,14 @@ fn from_hex(byte: u8) -> Option<u8> {
 
 fn render_manifest_result(manifest: &CapsuleManifest) -> anyhow::Result<String> {
     let json = serde_json::to_string_pretty(manifest)?;
+    let json_escaped = html_escape(&json);
+    let suggested_file = "capsule.manifest.json";
+
+    let cli_example = html_escape(&format!(
+        "cargo run -p caeles-runtime -- --manifest {}",
+        suggested_file
+    ));
+
     let html = format!(
         r#"<!doctype html>
 <html lang="pt-BR">
@@ -329,18 +433,35 @@ fn render_manifest_result(manifest: &CapsuleManifest) -> anyhow::Result<String> 
   <meta charset="utf-8"/>
   <title>Manifesto gerado</title>
   <style>
-    body {{ font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 720px; line-height: 1.5; }}
-    pre {{ background: #f6f8fa; padding: 1rem; overflow: auto; }}
-    a.button {{ display: inline-block; margin-top: 1rem; padding: 0.6rem 1rem; background: #0d6efd; color: #fff; text-decoration: none; border-radius: 4px; }}
+    body {{ font-family: "Inter", system-ui, sans-serif; margin: 0; padding: 2rem 1rem; display: flex; justify-content: center; background: #0b1021; color: #f4f6fb; }}
+    .card {{ background: #11162b; border: 1px solid #1f2b4d; border-radius: 14px; padding: 1.5rem; width: min(880px, 100%); box-shadow: 0 20px 80px rgba(0,0,0,0.45); }}
+    h1 {{ margin-top: 0; letter-spacing: -0.02em; }}
+    pre {{ background: #0c1329; padding: 1rem; overflow: auto; border-radius: 10px; border: 1px solid #1f2b4d; color: #e8f0ff; }}
+    .button {{ display: inline-block; margin-top: 1rem; padding: 0.6rem 1rem; background: linear-gradient(135deg, #4cc2ff, #7de0ff); color: #04122a; text-decoration: none; border-radius: 10px; font-weight: 700; }}
+    .row {{ display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }}
+    .muted {{ color: #9ba3b5; }}
+    code {{ background: #0c1329; padding: 0.2rem 0.4rem; border-radius: 6px; }}
   </style>
 </head>
 <body>
-  <h1>Manifesto gerado</h1>
-  <p>Copie o conteúdo abaixo para um arquivo <code>capsule.manifest.json</code> e compile sua cápsula para <code>wasm32-unknown-unknown</code>.</p>
-  <pre>{json}</pre>
-  <p><a class="button" href="/">Voltar</a></p>
+  <div class="card">
+    <h1>Manifesto gerado</h1>
+    <p class="muted">Salve como <code>{suggested_file}</code> e rode o runtime apontando para ele.</p>
+    <div class="row">
+      <a class="button" href="/" aria-label="Voltar ao formulário">Voltar</a>
+      <a class="button" href="data:application/json;charset=utf-8,{json_escaped}" download="{suggested_file}" aria-label="Baixar manifest JSON">Baixar JSON</a>
+    </div>
+    <div style="margin-top:1rem;">
+      <div class="muted">Exemplo de uso:</div>
+      <pre>{cli_example}</pre>
+    </div>
+    <div style="margin-top:1rem;">
+      <div class="muted">Conteúdo do manifest:</div>
+      <pre>{json_escaped}</pre>
+    </div>
+  </div>
 </body>
-</html>"#
+</html>"#,
     );
     Ok(html)
 }
@@ -393,6 +514,11 @@ fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("/");
 
+    if method.eq_ignore_ascii_case("GET") && path == "/health" {
+        respond(&mut stream, "200 OK", "text/plain; charset=utf-8", "ok")?;
+        return Ok(());
+    }
+
     if method.eq_ignore_ascii_case("POST") && path == "/generate" {
         let header_end = raw
             .windows(4)
@@ -404,6 +530,16 @@ fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
         let manifest = parse_form(&body_str);
         let html = render_manifest_result(&manifest)?;
         respond(&mut stream, "200 OK", "text/html; charset=utf-8", &html)?;
+        return Ok(());
+    }
+
+    if !method.eq_ignore_ascii_case("GET") || path != "/" {
+        respond(
+            &mut stream,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "Rota não encontrada. Use GET / ou POST /generate.",
+        )?;
         return Ok(());
     }
 
@@ -430,6 +566,15 @@ fn run_web_server(args: WebArgs) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn main() -> anyhow::Result<()> {
