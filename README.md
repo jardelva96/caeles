@@ -203,6 +203,7 @@ Você verá uma lista numerada; comandos úteis:
 - `q` → sai.
 - `s <texto>` → aplica filtro por ID/nome (ex.: `s logger`).
 - `id <capsule-id>` → executa direto pelo ID.
+- `json` → mostra a lista filtrada em JSON (útil para copiar/colar em outras ferramentas).
 
 Isso ajuda a validar rapidamente o fluxo enquanto a interface gráfica não está pronta.
 

@@ -62,6 +62,10 @@ struct UiArgs {
     /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
+
+    /// Filtro inicial (trecho do ID ou nome)
+    #[arg(long)]
+    filter: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,10 +111,10 @@ fn filter_entries<'a>(
     }
 }
 
-fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
+fn ui_loop(registry_path: &Path, initial_filter: Option<String>) -> anyhow::Result<()> {
     use std::io::{self, Write};
 
-    let mut filter: Option<String> = None;
+    let mut filter: Option<String> = initial_filter;
 
     loop {
         let entries = list_registry(registry_path)?;
@@ -134,7 +138,7 @@ fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
             }
         }
 
-        println!("\nComandos: número para executar, 'r' recarrega, 'q' sai, 's <texto>' filtra, 'id <capsule-id>' executa por ID.");
+        println!("\nComandos: número para executar, 'r' recarrega, 'q' sai, 's <texto>' filtra, 'id <capsule-id>' executa por ID, 'json' alterna modo detalhado.");
         print!("> ");
         io::stdout().flush()?;
 
@@ -170,6 +174,16 @@ fn ui_loop(registry_path: &Path) -> anyhow::Result<()> {
             {
                 Ok(_) => println!("Execução concluída.\n"),
                 Err(err) => println!("Falha ao executar cápsula: {err}\n"),
+            }
+            continue;
+        }
+
+        if trimmed.eq_ignore_ascii_case("json") {
+            if visible_entries.is_empty() {
+                println!("Nenhuma cápsula para mostrar.\n");
+            } else {
+                let as_json = serde_json::to_string_pretty(&visible_entries)?;
+                println!("{as_json}\n");
             }
             continue;
         }
@@ -231,6 +245,6 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Commands::Ui(args) => ui_loop(&args.registry),
+        Commands::Ui(args) => ui_loop(&args.registry, args.filter),
     }
 }
