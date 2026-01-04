@@ -174,6 +174,20 @@ Saída esperada (resumida):
 ./scripts/run-hello.sh
 ```
 
+### Listar cápsulas disponíveis (para integrar uma UI)
+
+Para inspecionar rapidamente o registry (por exemplo, alimentar uma futura interface), rode:
+
+```
+cargo run -p caeles-runtime -- list
+```
+
+Ou em JSON, pronto para parsing:
+
+```
+cargo run -p caeles-runtime -- list --format json
+```
+
 Ou, no futuro, via um app host que lista e executa cápsulas.
 
 🤝 Contribuição

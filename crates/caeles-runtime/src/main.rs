@@ -7,13 +7,6 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
-struct RegistryEntry {
-    pub id: String,
-    pub name: String,
-    pub manifest: String,
-}
-
 #[derive(Debug, Parser)]
 #[command(
     name = "caeles",
@@ -28,6 +21,8 @@ struct Cli {
 enum Commands {
     /// Executa uma cápsula a partir de um manifest ou ID.
     Run(RunArgs),
+    /// Lista as cápsulas disponíveis no registry.
+    List(ListArgs),
 }
 
 #[derive(Debug, ClapArgs)]
@@ -45,6 +40,24 @@ struct RunArgs {
     registry: PathBuf,
 }
 
+#[derive(Debug, ClapArgs)]
+struct ListArgs {
+    /// Caminho para o arquivo de registry de cápsulas
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+
+    /// Formato de saída (texto ou json)
+    #[arg(long, value_parser = ["text", "json"], default_value = "text")]
+    format: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryEntry {
+    pub id: String,
+    pub name: String,
+    pub manifest: String,
+}
+
 fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result<CapsuleManifest> {
     let text = fs::read_to_string(registry_path)?;
     let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
@@ -56,6 +69,12 @@ fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result
 
     let manifest_path = Path::new(&entry.manifest);
     CapsuleManifest::load(manifest_path)
+}
+
+fn list_registry(registry_path: &Path) -> anyhow::Result<Vec<RegistryEntry>> {
+    let text = fs::read_to_string(registry_path)?;
+    let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
+    Ok(entries)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -74,6 +93,18 @@ fn main() -> anyhow::Result<()> {
             };
 
             runtime::run_capsule(&manifest)
+        }
+        Commands::List(args) => {
+            let entries = list_registry(&args.registry)?;
+            if args.format == "json" {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                println!("Capsules em {}:", args.registry.display());
+                for entry in entries {
+                    println!("- {} ({}) -> {}", entry.name, entry.id, entry.manifest);
+                }
+            }
+            Ok(())
         }
     }
 }
