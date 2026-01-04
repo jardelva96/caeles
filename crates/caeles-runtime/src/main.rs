@@ -492,6 +492,12 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
                         }
                     }
                 }
+
+                // Se não houver Content-Length, estamos tratando um GET/HEAD simples:
+                // podemos parar de ler após o fim do cabeçalho.
+                if content_length.is_none() {
+                    break;
+                }
             }
         }
 
