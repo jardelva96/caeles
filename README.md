@@ -124,6 +124,20 @@ Executar com o núcleo CAELES (quando disponível):
 caeles-runtime --manifest path/para/capsule.manifest.json
 Ou, no Android, via um app host que lista e executa cápsulas.
 
+### Interface inicial para criar manifest
+
+Use o assistente embutido para gerar rapidamente um manifesto compatível com o runtime:
+
+```
+cargo run -p caeles-runtime -- init --output capsule.manifest.json
+```
+
+O comando abre um passo a passo interativo pedindo ID, nome, versão, caminho do wasm (alvo `wasm32-unknown-unknown`) e permissões de notificações/rede. Você também pode preencher flags diretamente, por exemplo:
+
+```
+cargo run -p caeles-runtime -- init --id com.caeles.demo --name "Demo" --allow-notifications
+```
+
 🤝 Contribuição
 No momento, o foco é:
 
