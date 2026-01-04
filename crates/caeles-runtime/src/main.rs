@@ -42,6 +42,12 @@ fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result
         .find(|e| e.id == id)
         .ok_or_else(|| anyhow::anyhow!(format!("Capsule id '{id}' não encontrado no registry")))?;
 
+    println!(
+        "> Registro encontrado: {} (id: {})",
+        entry.name,
+        entry.id
+    );
+
     let manifest_path = Path::new(&entry.manifest);
     CapsuleManifest::load(manifest_path)
 }
@@ -58,6 +64,15 @@ fn main() -> anyhow::Result<()> {
     } else {
         anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>");
     };
+
+    println!(
+        "> Manifest carregado: {} v{} (id: {})",
+        manifest.name, manifest.version, manifest.id
+    );
+    println!(
+        "> Permissões: notifications={}, network={}",
+        manifest.permissions.notifications, manifest.permissions.network
+    );
 
     runtime::run_capsule(&manifest)
 }
