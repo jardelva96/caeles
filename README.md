@@ -159,6 +159,21 @@ Também é possível usar o registry padrão:
 cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
 ```
 
+Saída esperada (resumida):
+
+```
+> Carregando cápsula: .../target/wasm32-wasi/debug/hello_capsule.wasm
+[capsule-log] Greeting recebido do manifest/env: Olá do manifest!
+[capsule-log] Conteúdo de /data/message.txt: Olá! Esta é a primeira cápsula CAELES lendo um arquivo preaberto.
+[capsule-notify] Notificação da cápsula: rotina principal concluída.
+```
+
+💡 Você também pode rodar o script auxiliar:
+
+```
+./scripts/run-hello.sh
+```
+
 Ou, no futuro, via um app host que lista e executa cápsulas.
 
 🤝 Contribuição
