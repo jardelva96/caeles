@@ -2,7 +2,7 @@ mod manifest;
 mod runtime;
 
 use crate::manifest::CapsuleManifest;
-use clap::Parser;
+use clap::{Args as ClapArgs, Parser, Subcommand};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,10 +16,22 @@ struct RegistryEntry {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "caeles-runtime",
+    name = "caeles",
     about = "CAELES runtime: executa cápsulas a partir de manifest ou ID"
 )]
-struct Args {
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Executa uma cápsula a partir de um manifest ou ID.
+    Run(RunArgs),
+}
+
+#[derive(Debug, ClapArgs)]
+struct RunArgs {
     /// Caminho para o arquivo de manifest JSON da cápsula
     #[arg(long, conflicts_with = "capsule_id")]
     manifest: Option<PathBuf>,
@@ -47,17 +59,21 @@ fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    let manifest = if let Some(path) = args.manifest {
-        // Caminho direto para o manifest
-        CapsuleManifest::load(&path)?
-    } else if let Some(id) = args.capsule_id {
-        // Resolve via registry
-        load_manifest_from_registry(&args.registry, &id)?
-    } else {
-        anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>");
-    };
+    match cli.command {
+        Commands::Run(args) => {
+            let manifest = if let Some(path) = args.manifest {
+                // Caminho direto para o manifest
+                CapsuleManifest::load(&path)?
+            } else if let Some(id) = args.capsule_id {
+                // Resolve via registry
+                load_manifest_from_registry(&args.registry, &id)?
+            } else {
+                anyhow::bail!("Use caeles run --manifest <arquivo> ou caeles run --capsule-id <id-da-capsula>");
+            };
 
-    runtime::run_capsule(&manifest)
+            runtime::run_capsule(&manifest)
+        }
+    }
 }

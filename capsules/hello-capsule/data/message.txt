@@ -1,0 +1,1 @@
+Olá! Esta é a primeira cápsula CAELES lendo um arquivo preaberto.

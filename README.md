@@ -40,8 +40,19 @@ Exemplo **simplificado** de manifesto (formato ainda em evolução):
 
   "permissions": {
     "notifications": false,
-    "network": false
+    "network": false,
+    "inherit_stdio": true
   },
+  "env": {
+    "LOG_LEVEL": "info"
+  },
+  "preopened_dirs": [
+    {
+      "host": "./data",
+      "guest": "/data",
+      "read_only": true
+    }
+  ],
 
   "lifecycle": {
     "kind": "on_demand"
@@ -91,6 +102,14 @@ experimentar o núcleo em Rust executando uma cápsula simples (wasm32-wasi)
 
 preparar o caminho para uma futura integração com Android
 
+### Permissões e sandbox
+
+- `notifications`: controla se `caeles::host_notify` imprime ou bloqueia a mensagem.
+- `network`: quando `false`, módulos que importarem APIs de rede do WASI (ex.: `sock_*` ou `wasi:io/socket`) são rejeitados.
+- `inherit_stdio`: quando `true`, a cápsula herda stdin/stdout/stderr do host; caso contrário, o runtime inicia com descritores fechados.
+- `env`: pares chave/valor validados (sem `=` ou bytes NUL) repassados para o WASI.
+- `preopened_dirs`: define mounts host→guest, normalizados contra o diretório do manifest e recusando caminhos que escapem via `..`. É possível marcar um mount como `read_only`.
+
 A API, o formato de manifesto e a estrutura do código ainda podem mudar bastante.
 
 🧪 Visão de uso (futuro)
@@ -119,11 +138,28 @@ Criar um manifesto CAELES apontando para o .wasm:
   }
 }
 ```
-Executar com o núcleo CAELES (quando disponível):
+### Rodar a cápsula de exemplo
 
+1) Adicione o target WASI e compile a cápsula:
 
-caeles run path/para/capsule.manifest.json
-Ou, no Android, via um app host que lista e executa cápsulas.
+```
+rustup target add wasm32-wasi
+cargo build -p hello-capsule --target wasm32-wasi
+```
+
+2) Execute a cápsula pelo runtime:
+
+```
+cargo run -p caeles-runtime -- run --manifest capsules/hello-capsule/manifest.json
+```
+
+Também é possível usar o registry padrão:
+
+```
+cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
+```
+
+Ou, no futuro, via um app host que lista e executa cápsulas.
 
 🤝 Contribuição
 No momento, o foco é:

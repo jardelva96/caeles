@@ -2,11 +2,22 @@
   "id": "com.caeles.example.logger",
   "name": "Logger Capsule",
   "version": "0.1.0",
-  "entry": "../../target/wasm32-unknown-unknown/debug/logger_capsule.wasm",
+  "entry": "../../target/wasm32-wasi/debug/logger_capsule.wasm",
   "permissions": {
     "notifications": true,
-    "network": false
+    "network": false,
+    "inherit_stdio": true
   },
+  "env": {
+    "EXAMPLE_ENV": "logger"
+  },
+  "preopened_dirs": [
+    {
+      "host": "./data",
+      "guest": "/logs",
+      "read_only": true
+    }
+  ],
   "lifecycle": {
     "kind": "on_demand"
   }
