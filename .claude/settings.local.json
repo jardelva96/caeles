@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cmd.exe /c \"c:\\\\Users\\\\Jardel\\\\Documents\\\\GitHub\\\\caeles\\\\build_test.bat\")",
+      "Bash(cargo check:*)"
+    ]
+  }
+}
