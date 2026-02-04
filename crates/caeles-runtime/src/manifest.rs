@@ -9,13 +9,17 @@ fn default_path_buf() -> PathBuf {
 #[derive(Debug, Deserialize)]
 pub struct Permissions {
     pub notifications: bool,
+    #[allow(dead_code)]
     pub network: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CapsuleManifest {
+    #[allow(dead_code)]
     pub id: String,
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub version: String,
     pub entry: String,
     pub permissions: Permissions,

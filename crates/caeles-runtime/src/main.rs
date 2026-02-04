@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
     pub id: String,
+    #[allow(dead_code)]
     pub name: String,
     pub manifest: String,
 }
