@@ -12,9 +12,25 @@ O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos
 
 - 🔒 isolada (sandbox WebAssembly)  
 - 📱 pensada primeiro para **Android**  
-- ⚡ leve e portátil (o mesmo `.wasm` pode rodar em vários hosts)  
+- ⚡ leve e portátil (o mesmo `.wasm` pode rodar em vários hosts)
+- 🛡️ segura (com limites de recursos e permissões)
 
 Você escreve a lógica da cápsula (por exemplo em Rust), gera um `.wasm`, descreve tudo em um **manifesto CAELES**, e o **núcleo CAELES** cuida de carregar e executar.
+
+## ⚡ Quick Start
+
+```bash
+# Clone e execute
+git clone https://github.com/jardelva96/caeles.git
+cd caeles
+./quickstart.sh
+
+# Ou use o Makefile
+make help           # Ver todos os comandos
+make build-all      # Compilar tudo
+make test           # Executar testes
+make run-hello      # Executar exemplo
+```
 
 ---
 
@@ -87,7 +103,7 @@ Em desktop, o núcleo pode ser usado para desenvolvimento, debug e testes de cá
 
 ## 🚦 Estado atual
 
-✅ **Funcional em fase inicial**
+✅ **Funcional e testado**
 
 O projeto já possui:
 
@@ -97,6 +113,11 @@ O projeto já possui:
 - ✅ **Sistema de permissões**: Controle de acesso (ex: notifications)
 - ✅ **Registry de cápsulas**: Gerenciamento centralizado de cápsulas disponíveis
 - ✅ **Exemplos funcionais**: `hello-capsule` e `logger-capsule`
+- ✅ **Limites de recursos**: Fuel para prevenir loops infinitos (100M instruções)
+- ✅ **Validação de segurança**: Limites de memória, validação de ponteiros
+- ✅ **Testes automatizados**: Suite de testes para manifest e runtime
+- ✅ **Build automation**: Makefile com comandos comuns
+- ✅ **CLI completa**: Listagem de cápsulas, help, versão
 
 **Em desenvolvimento:**
 
@@ -212,6 +233,12 @@ Crie um arquivo `manifest.json`:
 
 ### 5. Executar a cápsula
 
+**Listar cápsulas disponíveis:**
+
+```bash
+./target/release/caeles-runtime --list
+```
+
 **Opção 1: Diretamente pelo manifesto**
 
 ```bash
@@ -238,12 +265,23 @@ Execute:
 ./target/release/caeles-runtime --capsule-id com.exemplo.minha-capsule
 ```
 
+**Ver versão e ajuda:**
+
+```bash
+./target/release/caeles-runtime --version
+./target/release/caeles-runtime --help
+```
+
 ### Exemplos incluídos
 
 O repositório já inclui duas cápsulas de exemplo:
 
 ```bash
-# Compilar os exemplos
+# Usando Makefile (recomendado)
+make run-hello
+make run-logger
+
+# Ou manualmente
 cargo build --target wasm32-unknown-unknown --workspace
 
 # Executar hello-capsule
@@ -285,8 +323,27 @@ caeles/
 │   ├── hello-capsule/     # Exemplo básico
 │   ├── logger-capsule/    # Exemplo com múltiplos logs
 │   └── registry.json      # Registry de cápsulas disponíveis
+├── Makefile               # Comandos de build e execução
+├── quickstart.sh          # Script de início rápido
 └── README.md
 ```
+
+## 🔧 Solução de Problemas
+
+Encontrou algum problema? Consulte o [Guia de Solução de Problemas](TROUBLESHOOTING.md) que cobre:
+
+- Erros comuns e soluções
+- Problemas de compilação
+- Questões de permissão
+- Debug de cápsulas
+- FAQs
+
+## 📚 Documentação Adicional
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Como contribuir para o projeto
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Guia de solução de problemas
+- [crates/caeles-runtime/README.md](crates/caeles-runtime/README.md) - Documentação do runtime
+- [crates/caeles-sdk/README.md](crates/caeles-sdk/README.md) - Documentação do SDK
 
 ## 📄 Licença
 

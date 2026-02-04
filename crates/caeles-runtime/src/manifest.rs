@@ -38,7 +38,45 @@ impl CapsuleManifest {
         let mut manifest: CapsuleManifest = serde_json::from_str(&text)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         manifest.base_dir = base.to_path_buf();
+        
+        // Validações básicas
+        manifest.validate()?;
+        
         Ok(manifest)
+    }
+
+    /// Valida os campos do manifesto
+    fn validate(&self) -> anyhow::Result<()> {
+        // Valida ID (deve ser formato reverse domain)
+        if self.id.is_empty() {
+            anyhow::bail!("Campo 'id' não pode estar vazio");
+        }
+        if !self.id.contains('.') {
+            eprintln!("⚠️  Aviso: ID '{}' não segue convenção de reverse domain (ex: com.empresa.app)", self.id);
+        }
+
+        // Valida nome
+        if self.name.is_empty() {
+            anyhow::bail!("Campo 'name' não pode estar vazio");
+        }
+
+        // Valida versão (formato básico semver)
+        if self.version.is_empty() {
+            anyhow::bail!("Campo 'version' não pode estar vazio");
+        }
+        if !self.version.chars().any(|c| c.is_numeric()) {
+            eprintln!("⚠️  Aviso: Versão '{}' não parece seguir semver (ex: 1.0.0)", self.version);
+        }
+
+        // Valida entry
+        if self.entry.is_empty() {
+            anyhow::bail!("Campo 'entry' não pode estar vazio");
+        }
+        if !self.entry.ends_with(".wasm") {
+            eprintln!("⚠️  Aviso: Campo 'entry' não termina com .wasm: {}", self.entry);
+        }
+
+        Ok(())
     }
 
     /// Caminho completo para o arquivo .wasm

@@ -23,7 +23,9 @@ struct RegistryEntry {
 #[derive(Debug, Parser)]
 #[command(
     name = "caeles-runtime",
-    about = "CAELES runtime: executa cápsulas a partir de manifest ou ID"
+    about = "CAELES runtime: executa cápsulas a partir de manifest ou ID",
+    long_about = "CAELES é um motor de cápsulas WebAssembly focado em Android.\nExecuta módulos WASM com isolamento e controle de permissões.",
+    version = "0.1.0"
 )]
 struct Args {
     /// Caminho para o arquivo de manifest JSON da cápsula

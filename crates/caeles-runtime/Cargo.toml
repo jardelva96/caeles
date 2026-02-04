@@ -2,6 +2,8 @@
 name = "caeles-runtime"
 version = "0.1.0"
 edition = "2021"
+description = "CAELES WebAssembly capsule runtime"
+authors = ["CAELES Contributors"]
 
 [dependencies]
 anyhow = "1"
