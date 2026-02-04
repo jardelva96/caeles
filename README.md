@@ -8,7 +8,7 @@
 
 ## 🔍 O que é o CAELES?
 
-O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos compilados para **WASM/WASI** – de forma:
+O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos compilados para **WebAssembly** – de forma:
 
 - 🔒 isolada (sandbox WebAssembly)  
 - 📱 pensada primeiro para **Android**  
@@ -25,7 +25,7 @@ Você escreve a lógica da cápsula (por exemplo em Rust), gera um `.wasm`, desc
 Uma **cápsula CAELES** é a unidade básica do sistema.  
 Ela é composta por:
 
-- `capsule.wasm` – binário WebAssembly (`wasm32-wasi`)  
+- `capsule.wasm` – binário WebAssembly (`wasm32-unknown-unknown`)  
 - `capsule.manifest.json` – arquivo declarando como e com quais permissões ela roda
 
 Exemplo **simplificado** de manifesto (formato ainda em evolução):
@@ -48,20 +48,18 @@ Exemplo **simplificado** de manifesto (formato ainda em evolução):
   }
 }
 ```
-Núcleo CAELES (runtime)
-O núcleo CAELES é o “motor” que:
 
-lê e valida o manifesto
+### Núcleo CAELES (runtime)
 
-localiza e carrega o .wasm
+O núcleo CAELES é o "motor" que:
 
-prepara o ambiente WASI (args, env, I/O, filesystem sandbox)
+- lê e valida o manifesto
+- localiza e carrega o `.wasm`
+- prepara o ambiente de execução WebAssembly
+- aplica permissões conforme o manifesto
+- faz a ponte com o sistema host (Android, desktop, etc.)
 
-aplica permissões conforme o manifesto
-
-faz a ponte com o sistema host (Android, desktop, etc.)
-
-A implementação é em Rust, usando WebAssembly/WASI como base.
+A implementação é em Rust, usando WebAssembly como base.
 
 ---
 
