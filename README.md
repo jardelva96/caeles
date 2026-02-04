@@ -63,8 +63,11 @@ faz a ponte com o sistema host (Android, desktop, etc.)
 
 A implementação é em Rust, usando WebAssembly/WASI como base.
 
-🏗️ Arquitetura (alto nível)
+---
 
+## 🏗️ Arquitetura (alto nível)
+
+```
 [ Android / Desktop / Outro host ]
                │
                ▼
@@ -75,63 +78,218 @@ A implementação é em Rust, usando WebAssembly/WASI como base.
                │
                ▼
         [ Cápsula WASM ]
-          (wasm32-wasi)
+     (wasm32-unknown-unknown)
+```
+
 No Android, o CAELES deve ser embutido em um app host, que chama o núcleo nativo.
 
 Em desktop, o núcleo pode ser usado para desenvolvimento, debug e testes de cápsulas.
 
-🚦 Estado atual
-🚧 Projeto em fase inicial (experimento).
+---
 
-Objetivos desta fase:
+## 🚦 Estado atual
 
-definir o conceito de cápsula CAELES v0
+✅ **Funcional em fase inicial**
 
-experimentar o núcleo em Rust executando uma cápsula simples (wasm32-wasi)
+O projeto já possui:
 
-preparar o caminho para uma futura integração com Android
+- ✅ **Runtime funcional**: `caeles-runtime` carrega e executa cápsulas WASM
+- ✅ **SDK básico**: `caeles-sdk` com funções para log e notificações
+- ✅ **Sistema de manifesto**: Formato JSON validado e carregado
+- ✅ **Sistema de permissões**: Controle de acesso (ex: notifications)
+- ✅ **Registry de cápsulas**: Gerenciamento centralizado de cápsulas disponíveis
+- ✅ **Exemplos funcionais**: `hello-capsule` e `logger-capsule`
 
-A API, o formato de manifesto e a estrutura do código ainda podem mudar bastante.
+**Em desenvolvimento:**
 
-🧪 Visão de uso (futuro)
-Fluxo esperado para desenvolvedores:
+- 🚧 Integração com Android
+- 🚧 Mais host functions (filesystem, network, etc.)
+- 🚧 Sistema de dependências entre cápsulas
 
-Escrever a cápsula em Rust (ou outra linguagem que compile para WASM):
+A API, o formato de manifesto e a estrutura do código ainda podem mudar.
 
-rustup target add wasm32-wasi
-cargo build --target wasm32-wasi
-Isso gera algo como:
+---
 
-target/wasm32-wasi/debug/minha-capsula.wasm
-Criar um manifesto CAELES apontando para o .wasm:
+## 📖 API do SDK
+
+O `caeles-sdk` fornece funções para interagir com o host:
+
+### `log(msg: &str)`
+
+Envia uma mensagem de log para o host.
+
+```rust
+use caeles_sdk::log;
+
+log("Iniciando processamento...");
+```
+
+### `notify(msg: &str)`
+
+Envia uma notificação para o host. Requer permissão `notifications: true` no manifesto.
+
+```rust
+use caeles_sdk::notify;
+
+notify("Processamento concluído!");
+```
+
+Se a permissão não estiver ativada, a notificação será bloqueada pelo runtime.
+
+---
+
+## 🚀 Como usar
+
+### Pré-requisitos
+
+- Rust 1.70+ (instale via [rustup](https://rustup.rs/))
+- Target WASM: `rustup target add wasm32-unknown-unknown`
+
+### 1. Compilar o runtime
+
+```bash
+cargo build --release
+```
+
+Isso gera o executável `target/release/caeles-runtime`.
+
+### 2. Criar uma cápsula
+
+Uma cápsula é um projeto Rust que compila para WebAssembly.
+
+**Exemplo: `Cargo.toml`**
+
+```toml
+[package]
+name = "minha-capsule"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+caeles-sdk = { path = "../../crates/caeles-sdk" }
+```
+
+**Exemplo: `src/lib.rs`**
+
+```rust
+use caeles_sdk::{log, notify};
+
+#[no_mangle]
+pub extern "C" fn caeles_main() {
+    log("Olá do CAELES! 👋");
+    notify("Algo importante aconteceu! 🔔");
+}
+```
+
+### 3. Compilar a cápsula para WASM
+
+```bash
+cargo build --target wasm32-unknown-unknown --release
+```
+
+Isso gera: `target/wasm32-unknown-unknown/release/minha_capsule.wasm`
+
+### 4. Criar o manifesto
+
+Crie um arquivo `manifest.json`:
 
 ```json
 {
-  "id": "com.caeles.examples.mycapsule",
-  "name": "Minha Cápsula CAELES",
+  "id": "com.exemplo.minha-capsule",
+  "name": "Minha Cápsula",
   "version": "0.1.0",
-  "entry": "minha-capsula.wasm",
+  "entry": "../../target/wasm32-unknown-unknown/release/minha_capsule.wasm",
   "permissions": {
-    "notifications": false
+    "notifications": true,
+    "network": false
   },
   "lifecycle": {
     "kind": "on_demand"
   }
 }
 ```
-Executar com o núcleo CAELES (quando disponível):
 
+### 5. Executar a cápsula
 
-caeles run path/para/capsule.manifest.json
-Ou, no Android, via um app host que lista e executa cápsulas.
+**Opção 1: Diretamente pelo manifesto**
 
-🤝 Contribuição
-No momento, o foco é:
+```bash
+./target/release/caeles-runtime --manifest path/to/manifest.json
+```
 
-consolidar os conceitos (cápsula, manifesto, núcleo)
+**Opção 2: Pelo ID via registry**
 
-evoluir o código inicial em Rust
+Adicione sua cápsula ao `capsules/registry.json`:
 
-documentar decisões e ideias neste repositório
+```json
+[
+  {
+    "id": "com.exemplo.minha-capsule",
+    "name": "Minha Cápsula",
+    "manifest": "path/to/manifest.json"
+  }
+]
+```
 
-Sugestões de arquitetura, formato de manifesto, nomes de conceitos e ideias de cápsulas são bem-vindas via issues.
+Execute:
+
+```bash
+./target/release/caeles-runtime --capsule-id com.exemplo.minha-capsule
+```
+
+### Exemplos incluídos
+
+O repositório já inclui duas cápsulas de exemplo:
+
+```bash
+# Compilar os exemplos
+cargo build --target wasm32-unknown-unknown --workspace
+
+# Executar hello-capsule
+./target/debug/caeles-runtime --capsule-id com.caeles.example.hello
+
+# Executar logger-capsule
+./target/debug/caeles-runtime --capsule-id com.caeles.example.logger
+```
+
+---
+
+## 🤝 Contribuição
+
+Contribuições são bem-vindas! Áreas de interesse:
+
+- 🎯 Novas host functions (filesystem, network, etc.)
+- 📱 Integração com Android via JNI
+- 🔒 Melhorias no sistema de permissões
+- 📦 Sistema de empacotamento de cápsulas
+- 🧪 Testes e exemplos
+- 📚 Documentação
+
+Para contribuir:
+
+1. Faça um fork do repositório
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
+3. Commit suas mudanças (`git commit -am 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/nova-funcionalidade`)
+5. Abra um Pull Request
+
+## 📚 Estrutura do projeto
+
+```
+caeles/
+├── crates/
+│   ├── caeles-runtime/    # Runtime que executa cápsulas
+│   └── caeles-sdk/        # SDK para criar cápsulas
+├── capsules/
+│   ├── hello-capsule/     # Exemplo básico
+│   ├── logger-capsule/    # Exemplo com múltiplos logs
+│   └── registry.json      # Registry de cápsulas disponíveis
+└── README.md
+```
+
+## 📄 Licença
+
+Este projeto está em desenvolvimento. Licença a ser definida.
