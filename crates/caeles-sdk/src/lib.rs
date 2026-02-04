@@ -1,8 +1,8 @@
-/// Módulo de FFI com o host CAELES.
-///
-/// Este módulo declara as funções que a cápsula importa do runtime.
-/// O atributo `wasm_import_module = "caeles"` diz ao compilador que
-/// estas funções vêm do módulo de import "caeles" no WASM.
+// Módulo de FFI com o host CAELES.
+//
+// Este módulo declara as funções que a cápsula importa do runtime.
+// O atributo `wasm_import_module = "caeles"` diz ao compilador que
+// estas funções vêm do módulo de import "caeles" no WASM.
 #[link(wasm_import_module = "caeles")]
 extern "C" {
     fn host_log(ptr: *const u8, len: u32);
