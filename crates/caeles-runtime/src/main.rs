@@ -36,6 +36,7 @@ enum Commands {
     Build(BuildArgs),
     Ps(PsArgs),
     Inspect(InspectArgs),
+    InspectRun(InspectRunArgs),
     Logs(LogsArgs),
     Rm(RmArgs),
 }
@@ -95,6 +96,13 @@ struct LogsArgs {
     run_id: String,
     #[arg(long)]
     tail: Option<usize>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct InspectRunArgs {
+    run_id: String,
     #[arg(long, default_value_t = false)]
     json: bool,
 }
@@ -445,6 +453,64 @@ fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[derive(Debug, Serialize)]
+struct InspectRunView {
+    run_id: String,
+    capsule_id: String,
+    capsule_name: String,
+    manifest_path: String,
+    status: String,
+    started_at_unix_ms: u128,
+    finished_at_unix_ms: u128,
+    duration_ms: u128,
+    log_path: String,
+    log_exists: bool,
+}
+
+fn inspect_run_command(args: InspectRunArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+    let runs = load_run_records(&state_dir)?;
+    let run = runs
+        .into_iter()
+        .find(|r| r.run_id == args.run_id)
+        .ok_or_else(|| anyhow::anyhow!("Run id '{}' não encontrado", args.run_id))?;
+
+    let log_path = log_file_path(&state_dir, &run.run_id);
+    let view = InspectRunView {
+        run_id: run.run_id,
+        capsule_id: run.capsule_id,
+        capsule_name: run.capsule_name,
+        manifest_path: run.manifest_path,
+        status: run.status,
+        started_at_unix_ms: run.started_at_unix_ms,
+        finished_at_unix_ms: run.finished_at_unix_ms,
+        duration_ms: run
+            .finished_at_unix_ms
+            .saturating_sub(run.started_at_unix_ms),
+        log_path: log_path.display().to_string(),
+        log_exists: log_path.exists(),
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+        return Ok(());
+    }
+
+    println!("run_id: {}", view.run_id);
+    println!("capsule_id: {}", view.capsule_id);
+    println!("capsule_name: {}", view.capsule_name);
+    println!("manifest_path: {}", view.manifest_path);
+    println!("status: {}", view.status);
+    println!("started_at_unix_ms: {}", view.started_at_unix_ms);
+    println!("finished_at_unix_ms: {}", view.finished_at_unix_ms);
+    println!("duration_ms: {}", view.duration_ms);
+    println!("log_path: {}", view.log_path);
+    println!("log_exists: {}", view.log_exists);
+
+    Ok(())
+}
+
 fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
     let state_dir = ensure_state_dirs()?;
     let path = log_file_path(&state_dir, &args.run_id);
@@ -558,6 +624,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Build(args) => build_command(args),
         Commands::Ps(args) => ps_command(args),
         Commands::Inspect(args) => inspect_command(args),
+        Commands::InspectRun(args) => inspect_run_command(args),
         Commands::Logs(args) => logs_command(args),
         Commands::Rm(args) => rm_command(args),
     }
@@ -633,6 +700,13 @@ mod tests {
         let cli = Cli::try_parse_from(["caeles", "inspect", "com.caeles.example.hello", "--json"])
             .expect("inspect json should parse");
         assert!(matches!(cli.command, Commands::Inspect(_)));
+    }
+
+    #[test]
+    fn parse_inspect_run_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "inspect-run", "run-123", "--json"])
+            .expect("inspect-run json should parse");
+        assert!(matches!(cli.command, Commands::InspectRun(_)));
     }
 
     #[test]

@@ -145,6 +145,10 @@ caeles ps --status failed --capsule-id com.caeles.example.hello
 caeles inspect com.caeles.example.hello
 caeles inspect com.caeles.example.hello --json
 
+# inspeciona uma execução específica
+caeles inspect-run run-<id>
+caeles inspect-run run-<id> --json
+
 # logs de uma execução específica
 caeles logs run-<id>
 caeles logs run-<id> --json
