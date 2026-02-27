@@ -134,6 +134,15 @@ caeles run --manifest capsules/hello-capsule/manifest.json
 
 # build da cápsula (este subcomando exige Rust/Cargo no ambiente)
 caeles build capsules/hello-capsule
+
+# execuções recentes (estilo docker ps)
+caeles ps --limit 10
+
+# inspeciona uma cápsula do registry
+caeles inspect com.caeles.example.hello
+
+# logs de uma execução específica
+caeles logs run-<id>
 ```
 
 Durante desenvolvimento do próprio projeto, você também pode rodar via Cargo:
