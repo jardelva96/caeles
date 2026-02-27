@@ -20,7 +20,7 @@ struct RegistryEntry {
     pub manifest: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct RunRecord {
     run_id: String,
     capsule_id: String,
@@ -40,81 +40,67 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Executa uma cápsula a partir de um manifest ou ID do registry.
     Run(RunArgs),
-    /// Lista as cápsulas disponíveis no registry.
     List(ListArgs),
-    /// Compila uma cápsula para WebAssembly (requer toolchain Rust/cargo).
     Build(BuildArgs),
-    /// Mostra execuções recentes (estilo `docker ps`).
     Ps(PsArgs),
-    /// Inspeciona uma cápsula do registry (manifest + últimas execuções).
     Inspect(InspectArgs),
-    /// Exibe logs salvos de uma execução.
     Logs(LogsArgs),
+    Rm(RmArgs),
 }
 
 #[derive(Debug, Args)]
 struct RunArgs {
-    /// Caminho para o arquivo de manifest JSON da cápsula
     #[arg(long, conflicts_with = "capsule_id")]
     manifest: Option<PathBuf>,
-
-    /// ID da cápsula (procurado no registry JSON)
     #[arg(long, conflicts_with = "manifest")]
     capsule_id: Option<String>,
-
-    /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct ListArgs {
-    /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct BuildArgs {
-    /// Caminho para o Cargo.toml da cápsula (diretório ou arquivo).
     path: PathBuf,
-
-    /// Compila no perfil release.
     #[arg(long, default_value_t = false)]
     release: bool,
-
-    /// Triple de compilação (padrão CAELES).
     #[arg(long, default_value = "wasm32-unknown-unknown")]
     target: String,
 }
 
 #[derive(Debug, Args)]
 struct PsArgs {
-    /// Quantidade máxima de execuções exibidas.
     #[arg(long, default_value_t = 10)]
     limit: usize,
 }
 
 #[derive(Debug, Args)]
 struct InspectArgs {
-    /// ID da cápsula no registry.
     capsule_id: String,
-
-    /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct LogsArgs {
-    /// ID da execução (exibido em `caeles ps`).
     run_id: String,
-
-    /// Mostra apenas as últimas N linhas.
     #[arg(long)]
     tail: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+struct RmArgs {
+    /// Remove uma execução específica registrada em `caeles ps`.
+    run_id: Option<String>,
+    /// Remove todo o histórico de execução e logs.
+    #[arg(long, default_value_t = false, conflicts_with = "run_id")]
+    all: bool,
 }
 
 fn now_unix_ms() -> u128 {
@@ -161,7 +147,18 @@ fn load_run_records(base: &Path) -> anyhow::Result<Vec<RunRecord>> {
         let record: RunRecord = serde_json::from_str(&line)?;
         records.push(record);
     }
+
     Ok(records)
+}
+
+fn persist_run_records(base: &Path, records: &[RunRecord]) -> anyhow::Result<()> {
+    let mut text = String::new();
+    for r in records {
+        text.push_str(&serde_json::to_string(r)?);
+        text.push('\n');
+    }
+    fs::write(runs_file_path(base), text)?;
+    Ok(())
 }
 
 fn log_file_path(base: &Path, run_id: &str) -> PathBuf {
@@ -199,7 +196,6 @@ fn resolve_manifest_path(registry_path: &Path, manifest: &str) -> PathBuf {
     }
 
     let registry_dir = registry_path.parent().unwrap_or_else(|| Path::new("."));
-
     if manifest_path.exists() {
         return manifest_path.to_path_buf();
     }
@@ -209,8 +205,7 @@ fn resolve_manifest_path(registry_path: &Path, manifest: &str) -> PathBuf {
 
 fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
     if let Some(path) = &args.manifest {
-        let manifest = CapsuleManifest::load(path)?;
-        return Ok((manifest, path.clone()));
+        return Ok((CapsuleManifest::load(path)?, path.clone()));
     }
 
     if let Some(id) = &args.capsule_id {
@@ -228,8 +223,7 @@ fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, 
             );
         }
 
-        let manifest = CapsuleManifest::load(&manifest_path)?;
-        return Ok((manifest, manifest_path));
+        return Ok((CapsuleManifest::load(&manifest_path)?, manifest_path));
     }
 
     anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>")
@@ -240,7 +234,7 @@ fn run_command(args: RunArgs) -> anyhow::Result<()> {
     let (manifest, manifest_path) = resolve_manifest_by_args(&args)?;
 
     let started = now_unix_ms();
-    let run_id = format!("run-{}", started);
+    let run_id = format!("run-{started}");
 
     write_log_line(
         &state_dir,
@@ -264,16 +258,18 @@ fn run_command(args: RunArgs) -> anyhow::Result<()> {
         write_log_line(&state_dir, &run_id, "runtime_exit: success")?;
     }
 
-    let record = RunRecord {
-        run_id: run_id.clone(),
-        capsule_id: manifest.id.clone(),
-        capsule_name: manifest.name.clone(),
-        manifest_path: manifest_path.display().to_string(),
-        status: status.to_string(),
-        started_at_unix_ms: started,
-        finished_at_unix_ms: finished,
-    };
-    append_run_record(&state_dir, &record)?;
+    append_run_record(
+        &state_dir,
+        &RunRecord {
+            run_id: run_id.clone(),
+            capsule_id: manifest.id.clone(),
+            capsule_name: manifest.name.clone(),
+            manifest_path: manifest_path.display().to_string(),
+            status: status.to_string(),
+            started_at_unix_ms: started,
+            finished_at_unix_ms: finished,
+        },
+    )?;
 
     println!("> run id: {run_id}");
     result
@@ -352,11 +348,19 @@ fn ps_command(args: PsArgs) -> anyhow::Result<()> {
     runs.sort_by_key(|r| r.started_at_unix_ms);
     runs.reverse();
 
-    println!("RUN ID | CAPSULE ID | STATUS | STARTED(ms)");
+    println!("RUN ID | CAPSULE | STATUS | STARTED(ms) | DURATION(ms)");
     for record in runs.into_iter().take(args.limit) {
+        let duration = record
+            .finished_at_unix_ms
+            .saturating_sub(record.started_at_unix_ms);
         println!(
-            "{} | {} | {} | {}",
-            record.run_id, record.capsule_id, record.status, record.started_at_unix_ms
+            "{} | {} ({}) | {} | {} | {}",
+            record.run_id,
+            record.capsule_name,
+            record.capsule_id,
+            record.status,
+            record.started_at_unix_ms,
+            duration
         );
     }
 
@@ -383,7 +387,6 @@ fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
         .into_iter()
         .filter(|r| r.capsule_id == entry.id)
         .collect();
-
     runs.sort_by_key(|r| r.started_at_unix_ms);
     runs.reverse();
 
@@ -393,8 +396,8 @@ fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
         println!("last_runs:");
         for r in runs.into_iter().take(5) {
             println!(
-                "- run_id={} status={} started_ms={} finished_ms={}",
-                r.run_id, r.status, r.started_at_unix_ms, r.finished_at_unix_ms
+                "- run_id={} status={} started_ms={} finished_ms={} manifest={}",
+                r.run_id, r.status, r.started_at_unix_ms, r.finished_at_unix_ms, r.manifest_path
             );
         }
     }
@@ -411,7 +414,6 @@ fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
 
     let text = fs::read_to_string(path)?;
     let mut lines: Vec<&str> = text.lines().collect();
-
     if let Some(tail) = args.tail {
         if tail < lines.len() {
             lines = lines.split_off(lines.len() - tail);
@@ -425,6 +427,44 @@ fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn rm_command(args: RmArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+
+    if args.all {
+        let runs_path = runs_file_path(&state_dir);
+        if runs_path.exists() {
+            fs::remove_file(&runs_path)?;
+        }
+        let logs_dir = state_dir.join("logs");
+        if logs_dir.exists() {
+            fs::remove_dir_all(&logs_dir)?;
+        }
+        fs::create_dir_all(state_dir.join("logs"))?;
+        println!("Histórico e logs removidos.");
+        return Ok(());
+    }
+
+    let run_id = args
+        .run_id
+        .ok_or_else(|| anyhow::anyhow!("Informe <run_id> ou use --all"))?;
+
+    let mut runs = load_run_records(&state_dir)?;
+    let before = runs.len();
+    runs.retain(|r| r.run_id != run_id);
+    if runs.len() == before {
+        anyhow::bail!("Run id '{}' não encontrado", run_id);
+    }
+    persist_run_records(&state_dir, &runs)?;
+
+    let log_path = log_file_path(&state_dir, &run_id);
+    if log_path.exists() {
+        fs::remove_file(log_path)?;
+    }
+
+    println!("Run '{}' removido.", run_id);
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -435,6 +475,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Ps(args) => ps_command(args),
         Commands::Inspect(args) => inspect_command(args),
         Commands::Logs(args) => logs_command(args),
+        Commands::Rm(args) => rm_command(args),
     }
 }
 
@@ -473,9 +514,14 @@ mod tests {
 
     #[test]
     fn parse_ps_subcommand() {
-        let cli =
-            Cli::try_parse_from(["caeles", "ps", "--limit", "3"]).expect("ps command should parse");
+        let cli = Cli::try_parse_from(["caeles", "ps", "--limit", "3"]).expect("ps should parse");
         assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_rm_all_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "rm", "--all"]).expect("rm should parse");
+        assert!(matches!(cli.command, Commands::Rm(_)));
     }
 
     #[test]

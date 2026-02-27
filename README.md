@@ -143,6 +143,12 @@ caeles inspect com.caeles.example.hello
 
 # logs de uma execução específica
 caeles logs run-<id>
+
+# remove uma execução específica do histórico
+caeles rm run-<id>
+
+# limpa todo histórico/logs locais
+caeles rm --all
 ```
 
 Durante desenvolvimento do próprio projeto, você também pode rodar via Cargo:
