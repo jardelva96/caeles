@@ -127,17 +127,20 @@ caeles run path/para/capsule.manifest.json
 Também é possível usar a CLI no estilo Docker (`caeles <comando>`):
 
 ```bash
-# lista cápsulas do registry
+# após instalar/gerar o binário
+caeles list
+caeles run --capsule-id com.caeles.example.hello
+caeles run --manifest capsules/hello-capsule/manifest.json
+
+# build da cápsula (este subcomando exige Rust/Cargo no ambiente)
+caeles build capsules/hello-capsule
+```
+
+Durante desenvolvimento do próprio projeto, você também pode rodar via Cargo:
+
+```bash
 cargo run -p caeles-runtime -- list
-
-# executa por ID do registry
 cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
-
-# executa por manifest direto
-cargo run -p caeles-runtime -- run --manifest capsules/hello-capsule/manifest.json
-
-# build de uma cápsula para wasm32-unknown-unknown
-cargo run -p caeles-runtime -- build capsules/hello-capsule
 ```
 Ou, no Android, via um app host que lista e executa cápsulas.
 

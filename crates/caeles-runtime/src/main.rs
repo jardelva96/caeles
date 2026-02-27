@@ -29,7 +29,7 @@ enum Commands {
     Run(RunArgs),
     /// Lista as cápsulas disponíveis no registry.
     List(ListArgs),
-    /// Compila uma cápsula para WebAssembly (wasm32-unknown-unknown).
+    /// Compila uma cápsula para WebAssembly (requer toolchain Rust/cargo).
     Build(BuildArgs),
 }
 
@@ -179,7 +179,11 @@ fn build_command(args: BuildArgs) -> anyhow::Result<()> {
     }
 
     println!("> Executando: {:?}", cmd);
-    let status = cmd.status()?;
+    let status = cmd.status().map_err(|e| {
+        anyhow::anyhow!(
+            "Não foi possível executar o comando cargo. Instale Rust/Cargo para usar `caeles build`: {e}"
+        )
+    })?;
     if !status.success() {
         anyhow::bail!("Falha ao compilar cápsula com cargo build");
     }
