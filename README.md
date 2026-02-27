@@ -142,9 +142,11 @@ caeles ps --limit 10 --json
 
 # inspeciona uma cápsula do registry
 caeles inspect com.caeles.example.hello
+caeles inspect com.caeles.example.hello --json
 
 # logs de uma execução específica
 caeles logs run-<id>
+caeles logs run-<id> --json
 
 # remove uma execução específica do histórico
 caeles rm run-<id>

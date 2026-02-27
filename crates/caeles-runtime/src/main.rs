@@ -80,6 +80,8 @@ struct InspectArgs {
     capsule_id: String,
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -87,6 +89,8 @@ struct LogsArgs {
     run_id: String,
     #[arg(long)]
     tail: Option<usize>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -336,6 +340,25 @@ fn ps_command(args: PsArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct InspectRunViewItem {
+    run_id: String,
+    status: String,
+    started_ms: u128,
+    finished_ms: u128,
+    manifest: String,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectView {
+    id: String,
+    name: String,
+    registry: String,
+    manifest: String,
+    manifest_exists: bool,
+    last_runs: Vec<InspectRunViewItem>,
+}
+
 fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
     let entries = load_registry_entries(&args.registry)?;
     let entry = entries
@@ -345,12 +368,6 @@ fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
 
     let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
 
-    println!("id: {}", entry.id);
-    println!("name: {}", entry.name);
-    println!("registry: {}", args.registry.display());
-    println!("manifest: {}", manifest_path.display());
-    println!("manifest_exists: {}", manifest_path.exists());
-
     let state_dir = ensure_state_dirs()?;
     let mut runs: Vec<RunRecord> = load_run_records(&state_dir)?
         .into_iter()
@@ -359,21 +376,52 @@ fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
     runs.sort_by_key(|r| r.started_at_unix_ms);
     runs.reverse();
 
-    if runs.is_empty() {
+    let last_runs: Vec<InspectRunViewItem> = runs
+        .into_iter()
+        .take(5)
+        .map(|r| InspectRunViewItem {
+            run_id: r.run_id,
+            status: r.status,
+            started_ms: r.started_at_unix_ms,
+            finished_ms: r.finished_at_unix_ms,
+            manifest: r.manifest_path,
+        })
+        .collect();
+
+    let view = InspectView {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        registry: args.registry.display().to_string(),
+        manifest: manifest_path.display().to_string(),
+        manifest_exists: manifest_path.exists(),
+        last_runs,
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+        return Ok(());
+    }
+
+    println!("id: {}", view.id);
+    println!("name: {}", view.name);
+    println!("registry: {}", view.registry);
+    println!("manifest: {}", view.manifest);
+    println!("manifest_exists: {}", view.manifest_exists);
+
+    if view.last_runs.is_empty() {
         println!("last_runs: []");
     } else {
         println!("last_runs:");
-        for r in runs.into_iter().take(5) {
+        for r in view.last_runs {
             println!(
                 "- run_id={} status={} started_ms={} finished_ms={} manifest={}",
-                r.run_id, r.status, r.started_at_unix_ms, r.finished_at_unix_ms, r.manifest_path
+                r.run_id, r.status, r.started_ms, r.finished_ms, r.manifest
             );
         }
     }
 
     Ok(())
 }
-
 fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
     let state_dir = ensure_state_dirs()?;
     let path = log_file_path(&state_dir, &args.run_id);
@@ -382,11 +430,16 @@ fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
     }
 
     let text = fs::read_to_string(path)?;
-    let mut lines: Vec<&str> = text.lines().collect();
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
     if let Some(tail) = args.tail {
         if tail < lines.len() {
             lines = lines.split_off(lines.len() - tail);
         }
+    }
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&lines)?);
+        return Ok(());
     }
 
     for line in lines {
@@ -395,7 +448,6 @@ fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
 
     Ok(())
 }
-
 fn rm_command(args: RmArgs) -> anyhow::Result<()> {
     let state_dir = ensure_state_dirs()?;
 
@@ -497,6 +549,20 @@ mod tests {
     fn parse_ps_json_subcommand() {
         let cli = Cli::try_parse_from(["caeles", "ps", "--json"]).expect("ps json should parse");
         assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_inspect_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "inspect", "com.caeles.example.hello", "--json"])
+            .expect("inspect json should parse");
+        assert!(matches!(cli.command, Commands::Inspect(_)));
+    }
+
+    #[test]
+    fn parse_logs_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "logs", "run-123", "--json"])
+            .expect("logs json should parse");
+        assert!(matches!(cli.command, Commands::Logs(_)));
     }
 
     #[test]
