@@ -34,6 +34,8 @@ enum Commands {
     Run(RunArgs),
     List(ListArgs),
     Build(BuildArgs),
+    Package(PackageArgs),
+    Pull(PullArgs),
     Ps(PsArgs),
     Inspect(InspectArgs),
     InspectRun(InspectRunArgs),
@@ -66,6 +68,27 @@ struct BuildArgs {
     release: bool,
     #[arg(long, default_value = "wasm32-unknown-unknown")]
     target: String,
+}
+
+#[derive(Debug, Args)]
+struct PackageArgs {
+    #[arg(long, conflicts_with = "capsule_id")]
+    manifest: Option<PathBuf>,
+    #[arg(long, conflicts_with = "manifest")]
+    capsule_id: Option<String>,
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value = ".caeles/packages")]
+    output_dir: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct PullArgs {
+    capsule_id: String,
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value = ".caeles/pulled")]
+    output_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -156,18 +179,22 @@ fn resolve_manifest_path(registry_path: &Path, manifest: &str) -> PathBuf {
     registry_dir.join(manifest_path)
 }
 
-fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
-    if let Some(path) = &args.manifest {
+fn resolve_manifest_with_registry(
+    manifest: Option<&PathBuf>,
+    capsule_id: Option<&String>,
+    registry: &Path,
+) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
+    if let Some(path) = manifest {
         return Ok((CapsuleManifest::load(path)?, path.clone()));
     }
 
-    if let Some(id) = &args.capsule_id {
-        let entries = load_registry_entries(&args.registry)?;
+    if let Some(id) = capsule_id {
+        let entries = load_registry_entries(registry)?;
         let entry = entries.iter().find(|e| e.id == *id).ok_or_else(|| {
             anyhow::anyhow!(format!("Capsule id '{id}' não encontrado no registry"))
         })?;
 
-        let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
+        let manifest_path = resolve_manifest_path(registry, &entry.manifest);
         if !manifest_path.exists() {
             anyhow::bail!(
                 "Manifest da cápsula '{}' não encontrado em '{}'",
@@ -180,6 +207,14 @@ fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, 
     }
 
     anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>")
+}
+
+fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
+    resolve_manifest_with_registry(
+        args.manifest.as_ref(),
+        args.capsule_id.as_ref(),
+        &args.registry,
+    )
 }
 
 fn run_command(args: RunArgs) -> anyhow::Result<()> {
@@ -315,6 +350,65 @@ fn build_command(args: BuildArgs) -> anyhow::Result<()> {
     }
 
     println!("> Build concluído: {}", manifest_path.display());
+    Ok(())
+}
+
+fn package_command(args: PackageArgs) -> anyhow::Result<()> {
+    let (manifest, manifest_path) = resolve_manifest_with_registry(
+        args.manifest.as_ref(),
+        args.capsule_id.as_ref(),
+        &args.registry,
+    )?;
+
+    let wasm_path = manifest.wasm_path();
+    if !wasm_path.exists() {
+        anyhow::bail!("Arquivo wasm não encontrado em '{}'", wasm_path.display());
+    }
+
+    let pkg_dir = args.output_dir.join(&manifest.id).join(&manifest.version);
+    fs::create_dir_all(&pkg_dir)?;
+
+    let manifest_out = pkg_dir.join("manifest.json");
+    let wasm_out = pkg_dir.join("capsule.wasm");
+    fs::copy(&manifest_path, &manifest_out)?;
+    fs::copy(&wasm_path, &wasm_out)?;
+
+    let metadata = serde_json::json!({
+        "id": manifest.id,
+        "name": manifest.name,
+        "version": manifest.version,
+        "source_manifest": manifest_path.display().to_string(),
+        "packaged_at_unix_ms": now_unix_ms()
+    });
+    fs::write(
+        pkg_dir.join("package.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+
+    println!("> Package criado em {}", pkg_dir.display());
+    Ok(())
+}
+
+fn pull_command(args: PullArgs) -> anyhow::Result<()> {
+    let (manifest, manifest_path) =
+        resolve_manifest_with_registry(None, Some(&args.capsule_id), &args.registry)?;
+
+    let wasm_path = manifest.wasm_path();
+    if !wasm_path.exists() {
+        anyhow::bail!("Arquivo wasm não encontrado em '{}'", wasm_path.display());
+    }
+
+    let pull_dir = args.output_dir.join(&manifest.id).join(&manifest.version);
+    fs::create_dir_all(&pull_dir)?;
+
+    fs::copy(&manifest_path, pull_dir.join("manifest.json"))?;
+    fs::copy(&wasm_path, pull_dir.join("capsule.wasm"))?;
+
+    println!(
+        "> Capsule '{}' disponível em {}",
+        manifest.id,
+        pull_dir.display()
+    );
     Ok(())
 }
 
@@ -622,6 +716,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Run(args) => run_command(args),
         Commands::List(args) => list_command(args),
         Commands::Build(args) => build_command(args),
+        Commands::Package(args) => package_command(args),
+        Commands::Pull(args) => pull_command(args),
         Commands::Ps(args) => ps_command(args),
         Commands::Inspect(args) => inspect_command(args),
         Commands::InspectRun(args) => inspect_run_command(args),
@@ -661,6 +757,25 @@ mod tests {
         let cli = Cli::try_parse_from(["caeles", "build", "capsules/hello-capsule"])
             .expect("build command should parse");
         assert!(matches!(cli.command, Commands::Build(_)));
+    }
+
+    #[test]
+    fn parse_package_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "package",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("package command should parse");
+        assert!(matches!(cli.command, Commands::Package(_)));
+    }
+
+    #[test]
+    fn parse_pull_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "pull", "com.caeles.example.hello"])
+            .expect("pull command should parse");
+        assert!(matches!(cli.command, Commands::Pull(_)));
     }
 
     #[test]

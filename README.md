@@ -136,6 +136,12 @@ caeles run --manifest capsules/hello-capsule/manifest.json
 # build da cápsula (este subcomando exige Rust/Cargo no ambiente)
 caeles build capsules/hello-capsule
 
+# empacota uma cápsula local (manifest + wasm)
+caeles package --capsule-id com.caeles.example.hello
+
+# “pull” local para diretório de artefatos
+caeles pull com.caeles.example.hello
+
 # execuções recentes (estilo docker ps)
 caeles ps --limit 10
 caeles ps --limit 10 --json
