@@ -2,11 +2,7 @@ use crate::manifest::CapsuleManifest;
 use anyhow::Result;
 use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 
-fn read_string_from_memory(
-    mut caller: Caller<'_, ()>,
-    ptr: i32,
-    len: i32,
-) -> Option<String> {
+fn read_string_from_memory(mut caller: Caller<'_, ()>, ptr: i32, len: i32) -> Option<String> {
     let memory = match caller.get_export("memory") {
         Some(Extern::Memory(mem)) => mem,
         _ => {
