@@ -104,6 +104,12 @@ struct RmArgs {
     run_id: Option<String>,
     #[arg(long, default_value_t = false, conflicts_with = "run_id")]
     all: bool,
+    /// Remove execuções por status (ex.: failed, exited).
+    #[arg(long, conflicts_with = "run_id")]
+    status: Option<String>,
+    /// Remove execuções por ID da cápsula.
+    #[arg(long, conflicts_with = "run_id")]
+    capsule_id: Option<String>,
 }
 
 fn now_unix_ms() -> u128 {
@@ -482,24 +488,64 @@ fn rm_command(args: RmArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let run_id = args
-        .run_id
-        .ok_or_else(|| anyhow::anyhow!("Informe <run_id> ou use --all"))?;
-
     let mut runs = load_run_records(&state_dir)?;
-    let before = runs.len();
-    runs.retain(|r| r.run_id != run_id);
-    if runs.len() == before {
-        anyhow::bail!("Run id '{}' não encontrado", run_id);
+
+    if let Some(run_id) = args.run_id {
+        let before = runs.len();
+        runs.retain(|r| r.run_id != run_id);
+        if runs.len() == before {
+            anyhow::bail!("Run id '{}' não encontrado", run_id);
+        }
+        persist_run_records(&state_dir, &runs)?;
+
+        let log_path = log_file_path(&state_dir, &run_id);
+        if log_path.exists() {
+            fs::remove_file(log_path)?;
+        }
+
+        println!("Run '{}' removido.", run_id);
+        return Ok(());
     }
+
+    let status_filter = args.status;
+    let capsule_filter = args.capsule_id;
+    if status_filter.is_none() && capsule_filter.is_none() {
+        anyhow::bail!("Informe <run_id>, --all, --status ou --capsule-id");
+    }
+
+    let mut removed_ids = Vec::new();
+    runs.retain(|r| {
+        let status_match = status_filter
+            .as_ref()
+            .map(|s| r.status == *s)
+            .unwrap_or(true);
+        let capsule_match = capsule_filter
+            .as_ref()
+            .map(|c| r.capsule_id == *c)
+            .unwrap_or(true);
+
+        let should_remove = status_match && capsule_match;
+        if should_remove {
+            removed_ids.push(r.run_id.clone());
+            false
+        } else {
+            true
+        }
+    });
+
+    if removed_ids.is_empty() {
+        anyhow::bail!("Nenhuma execução encontrada para os filtros informados");
+    }
+
     persist_run_records(&state_dir, &runs)?;
-
-    let log_path = log_file_path(&state_dir, &run_id);
-    if log_path.exists() {
-        fs::remove_file(log_path)?;
+    for run_id in &removed_ids {
+        let log_path = log_file_path(&state_dir, run_id);
+        if log_path.exists() {
+            fs::remove_file(log_path)?;
+        }
     }
 
-    println!("Run '{}' removido.", run_id);
+    println!("{} execução(ões) removida(s).", removed_ids.len());
     Ok(())
 }
 
@@ -599,6 +645,20 @@ mod tests {
     #[test]
     fn parse_rm_all_subcommand() {
         let cli = Cli::try_parse_from(["caeles", "rm", "--all"]).expect("rm should parse");
+        assert!(matches!(cli.command, Commands::Rm(_)));
+    }
+
+    #[test]
+    fn parse_rm_with_filters_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "rm",
+            "--status",
+            "failed",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("rm with filters should parse");
         assert!(matches!(cli.command, Commands::Rm(_)));
     }
 

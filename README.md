@@ -152,6 +152,9 @@ caeles logs run-<id> --json
 # remove uma execução específica do histórico
 caeles rm run-<id>
 
+# remove em lote por filtros
+caeles rm --status failed --capsule-id com.caeles.example.hello
+
 # limpa todo histórico/logs locais
 caeles rm --all
 ```
