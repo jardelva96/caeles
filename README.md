@@ -124,11 +124,20 @@ Executar com o núcleo CAELES (quando disponível):
 
 caeles run path/para/capsule.manifest.json
 
-Também é possível usar um registry de cápsulas e listar os IDs disponíveis:
+Também é possível usar a CLI no estilo Docker (`caeles <comando>`):
 
 ```bash
-cargo run -p caeles-runtime -- --list
-cargo run -p caeles-runtime -- --capsule-id com.caeles.example.hello
+# lista cápsulas do registry
+cargo run -p caeles-runtime -- list
+
+# executa por ID do registry
+cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
+
+# executa por manifest direto
+cargo run -p caeles-runtime -- run --manifest capsules/hello-capsule/manifest.json
+
+# build de uma cápsula para wasm32-unknown-unknown
+cargo run -p caeles-runtime -- build capsules/hello-capsule
 ```
 Ou, no Android, via um app host que lista e executa cápsulas.
 
