@@ -129,6 +129,7 @@ Também é possível usar a CLI no estilo Docker (`caeles <comando>`):
 ```bash
 # após instalar/gerar o binário
 caeles list
+caeles list --json
 caeles run --capsule-id com.caeles.example.hello
 caeles run --manifest capsules/hello-capsule/manifest.json
 
@@ -137,6 +138,7 @@ caeles build capsules/hello-capsule
 
 # execuções recentes (estilo docker ps)
 caeles ps --limit 10
+caeles ps --limit 10 --json
 
 # inspeciona uma cápsula do registry
 caeles inspect com.caeles.example.hello

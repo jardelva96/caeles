@@ -8,7 +8,7 @@ use crate::state::{
     runs_file_path, write_log_line, RunRecord,
 };
 use clap::{Args, Parser, Subcommand};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,6 +54,8 @@ struct RunArgs {
 struct ListArgs {
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -69,6 +71,8 @@ struct BuildArgs {
 struct PsArgs {
     #[arg(long, default_value_t = 10)]
     limit: usize,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -200,25 +204,54 @@ fn run_command(args: RunArgs) -> anyhow::Result<()> {
     result
 }
 
+#[derive(Debug, Serialize)]
+struct ListViewItem {
+    id: String,
+    name: String,
+    manifest: String,
+    manifest_exists: bool,
+}
+
 fn list_command(args: ListArgs) -> anyhow::Result<()> {
     let entries = load_registry_entries(&args.registry)?;
 
     if entries.is_empty() {
-        println!(
-            "Nenhuma cápsula encontrada no registry: {}",
-            args.registry.display()
-        );
+        if args.json {
+            println!("[]");
+        } else {
+            println!(
+                "Nenhuma cápsula encontrada no registry: {}",
+                args.registry.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let items: Vec<ListViewItem> = entries
+        .into_iter()
+        .map(|entry| {
+            let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
+            ListViewItem {
+                id: entry.id,
+                name: entry.name,
+                manifest: manifest_path.display().to_string(),
+                manifest_exists: manifest_path.exists(),
+            }
+        })
+        .collect();
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&items)?);
         return Ok(());
     }
 
     println!("Cápsulas em {}:", args.registry.display());
-    for entry in entries {
-        let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
-        println!("- {} ({})", entry.id, entry.name);
-        if manifest_path.exists() {
-            println!("  manifest: {}", manifest_path.display());
+    for item in items {
+        println!("- {} ({})", item.id, item.name);
+        if item.manifest_exists {
+            println!("  manifest: {}", item.manifest);
         } else {
-            println!("  manifest: {} [não encontrado]", manifest_path.display());
+            println!("  manifest: {} [não encontrado]", item.manifest);
         }
     }
 
@@ -266,15 +299,26 @@ fn ps_command(args: PsArgs) -> anyhow::Result<()> {
     let mut runs = load_run_records(&state_dir)?;
 
     if runs.is_empty() {
-        println!("Nenhuma execução registrada ainda.");
+        if args.json {
+            println!("[]");
+        } else {
+            println!("Nenhuma execução registrada ainda.");
+        }
         return Ok(());
     }
 
     runs.sort_by_key(|r| r.started_at_unix_ms);
     runs.reverse();
 
+    let runs: Vec<RunRecord> = runs.into_iter().take(args.limit).collect();
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&runs)?);
+        return Ok(());
+    }
+
     println!("RUN ID | CAPSULE | STATUS | STARTED(ms) | DURATION(ms)");
-    for record in runs.into_iter().take(args.limit) {
+    for record in runs {
         let duration = record
             .finished_at_unix_ms
             .saturating_sub(record.started_at_unix_ms);
@@ -438,8 +482,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_list_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "list", "--json"]).expect("list should parse");
+        assert!(matches!(cli.command, Commands::List(_)));
+    }
+
+    #[test]
     fn parse_ps_subcommand() {
         let cli = Cli::try_parse_from(["caeles", "ps", "--limit", "3"]).expect("ps should parse");
+        assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_ps_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "ps", "--json"]).expect("ps json should parse");
         assert!(matches!(cli.command, Commands::Ps(_)));
     }
 
