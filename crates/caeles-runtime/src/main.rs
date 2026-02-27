@@ -1,34 +1,25 @@
 mod manifest;
 mod runtime;
+mod state;
 
 use crate::manifest::CapsuleManifest;
+use crate::state::{
+    append_run_record, ensure_state_dirs, load_run_records, log_file_path, persist_run_records,
+    runs_file_path, write_log_line, RunRecord,
+};
 use clap::{Args, Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const STATE_DIR: &str = ".caeles/state";
 
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
     pub id: String,
     pub name: String,
     pub manifest: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct RunRecord {
-    run_id: String,
-    capsule_id: String,
-    capsule_name: String,
-    manifest_path: String,
-    status: String,
-    started_at_unix_ms: u128,
-    finished_at_unix_ms: u128,
 }
 
 #[derive(Debug, Parser)]
@@ -96,9 +87,7 @@ struct LogsArgs {
 
 #[derive(Debug, Args)]
 struct RmArgs {
-    /// Remove uma execução específica registrada em `caeles ps`.
     run_id: Option<String>,
-    /// Remove todo o histórico de execução e logs.
     #[arg(long, default_value_t = false, conflicts_with = "run_id")]
     all: bool,
 }
@@ -108,70 +97,6 @@ fn now_unix_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_millis()
-}
-
-fn ensure_state_dirs() -> anyhow::Result<PathBuf> {
-    let base = PathBuf::from(STATE_DIR);
-    fs::create_dir_all(base.join("logs"))?;
-    Ok(base)
-}
-
-fn runs_file_path(base: &Path) -> PathBuf {
-    base.join("runs.jsonl")
-}
-
-fn append_run_record(base: &Path, record: &RunRecord) -> anyhow::Result<()> {
-    let line = serde_json::to_string(record)?;
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(runs_file_path(base))?;
-    writeln!(f, "{line}")?;
-    Ok(())
-}
-
-fn load_run_records(base: &Path) -> anyhow::Result<Vec<RunRecord>> {
-    let runs_path = runs_file_path(base);
-    if !runs_path.exists() {
-        return Ok(vec![]);
-    }
-
-    let file = fs::File::open(runs_path)?;
-    let reader = BufReader::new(file);
-    let mut records = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let record: RunRecord = serde_json::from_str(&line)?;
-        records.push(record);
-    }
-
-    Ok(records)
-}
-
-fn persist_run_records(base: &Path, records: &[RunRecord]) -> anyhow::Result<()> {
-    let mut text = String::new();
-    for r in records {
-        text.push_str(&serde_json::to_string(r)?);
-        text.push('\n');
-    }
-    fs::write(runs_file_path(base), text)?;
-    Ok(())
-}
-
-fn log_file_path(base: &Path, run_id: &str) -> PathBuf {
-    base.join("logs").join(format!("{run_id}.log"))
-}
-
-fn write_log_line(base: &Path, run_id: &str, message: &str) -> anyhow::Result<()> {
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file_path(base, run_id))?;
-    writeln!(f, "{message}")?;
-    Ok(())
 }
 
 fn load_registry_entries(registry_path: &Path) -> anyhow::Result<Vec<RegistryEntry>> {
