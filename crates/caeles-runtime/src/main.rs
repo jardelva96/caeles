@@ -73,6 +73,12 @@ struct PsArgs {
     limit: usize,
     #[arg(long, default_value_t = false)]
     json: bool,
+    /// Filtra por status da execução (ex.: failed, exited).
+    #[arg(long)]
+    status: Option<String>,
+    /// Filtra por ID da cápsula.
+    #[arg(long)]
+    capsule_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -302,19 +308,30 @@ fn ps_command(args: PsArgs) -> anyhow::Result<()> {
     let state_dir = ensure_state_dirs()?;
     let mut runs = load_run_records(&state_dir)?;
 
+    runs.sort_by_key(|r| r.started_at_unix_ms);
+    runs.reverse();
+
+    let runs: Vec<RunRecord> = runs
+        .into_iter()
+        .filter(|r| match &args.status {
+            Some(status) => r.status == *status,
+            None => true,
+        })
+        .filter(|r| match &args.capsule_id {
+            Some(capsule_id) => r.capsule_id == *capsule_id,
+            None => true,
+        })
+        .take(args.limit)
+        .collect();
+
     if runs.is_empty() {
         if args.json {
             println!("[]");
         } else {
-            println!("Nenhuma execução registrada ainda.");
+            println!("Nenhuma execução registrada para os filtros informados.");
         }
         return Ok(());
     }
-
-    runs.sort_by_key(|r| r.started_at_unix_ms);
-    runs.reverse();
-
-    let runs: Vec<RunRecord> = runs.into_iter().take(args.limit).collect();
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&runs)?);
@@ -548,6 +565,20 @@ mod tests {
     #[test]
     fn parse_ps_json_subcommand() {
         let cli = Cli::try_parse_from(["caeles", "ps", "--json"]).expect("ps json should parse");
+        assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_ps_with_filters_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "ps",
+            "--status",
+            "failed",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("ps with filters should parse");
         assert!(matches!(cli.command, Commands::Ps(_)));
     }
 

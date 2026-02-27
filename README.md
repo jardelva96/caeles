@@ -139,6 +139,7 @@ caeles build capsules/hello-capsule
 # execuções recentes (estilo docker ps)
 caeles ps --limit 10
 caeles ps --limit 10 --json
+caeles ps --status failed --capsule-id com.caeles.example.hello
 
 # inspeciona uma cápsula do registry
 caeles inspect com.caeles.example.hello
