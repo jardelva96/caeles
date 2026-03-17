@@ -1,12 +1,8 @@
 use crate::manifest::CapsuleManifest;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 
-fn read_string_from_memory(
-    mut caller: Caller<'_, ()>,
-    ptr: i32,
-    len: i32,
-) -> Option<String> {
+fn read_string_from_memory(mut caller: Caller<'_, ()>, ptr: i32, len: i32) -> Option<String> {
     let memory = match caller.get_export("memory") {
         Some(Extern::Memory(mem)) => mem,
         _ => {
@@ -31,24 +27,29 @@ fn read_string_from_memory(
 }
 
 pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
-    // Engine do CAELES
     let engine = Engine::default();
 
     let module_path = manifest.wasm_path();
+    println!(
+        "> Executando cápsula '{}' (id={}, version={})",
+        manifest.name, manifest.id, manifest.version
+    );
+    println!(
+        "> Permissões: notifications={}, network={}",
+        manifest.permissions.notifications, manifest.permissions.network
+    );
     println!("> Carregando cápsula: {}", module_path.display());
 
-    // Carrega o módulo WASM da cápsula (wasm32-unknown-unknown)
-    let module = Module::from_file(&engine, &module_path)?;
+    let module = Module::from_file(&engine, &module_path).with_context(|| {
+        format!(
+            "Falha ao carregar módulo WASM '{}'. Compile a cápsula antes de executar.",
+            module_path.display()
+        )
+    })?;
 
-    // Store sem estado (por enquanto não temos contexto customizado)
     let mut store = Store::new(&engine, ());
-
-    // Linker para registrar imports que a cápsula espera
     let mut linker = Linker::new(&engine);
 
-    // -------------------------
-    // Import "caeles"."host_log"
-    // -------------------------
     linker.func_wrap(
         "caeles",
         "host_log",
@@ -59,12 +60,7 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
         },
     )?;
 
-    // ----------------------------
-    // Import "caeles"."host_notify"
-    // Respeita permissions.notifications do manifest
-    // ----------------------------
     let notifications_allowed = manifest.permissions.notifications;
-
     linker.func_wrap(
         "caeles",
         "host_notify",
@@ -81,10 +77,7 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
         },
     )?;
 
-    // Instancia o módulo com os imports registrados
     let instance = linker.instantiate(&mut store, &module)?;
-
-    // A "entrypoint" padrão da cápsula CAELES será a função exportada `caeles_main`
     let func = instance.get_typed_func::<(), ()>(&mut store, "caeles_main")?;
 
     println!("> Chamando caeles_main da cápsula...");

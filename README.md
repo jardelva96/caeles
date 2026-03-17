@@ -123,6 +123,62 @@ Executar com o núcleo CAELES (quando disponível):
 
 
 caeles run path/para/capsule.manifest.json
+
+Também é possível usar a CLI no estilo Docker (`caeles <comando>`):
+
+```bash
+# após instalar/gerar o binário
+caeles list
+caeles list --json
+caeles run --capsule-id com.caeles.example.hello
+caeles run --manifest capsules/hello-capsule/manifest.json
+
+# build da cápsula (este subcomando exige Rust/Cargo no ambiente)
+caeles build capsules/hello-capsule
+
+# empacota uma cápsula local (manifest + wasm)
+caeles package --capsule-id com.caeles.example.hello
+
+# “pull” local para diretório de artefatos
+caeles pull com.caeles.example.hello
+
+# lista imagens locais (pacotes/pulls)
+caeles images
+caeles images --json
+
+# execuções recentes (estilo docker ps)
+caeles ps --limit 10
+caeles ps --limit 10 --json
+caeles ps --status failed --capsule-id com.caeles.example.hello
+
+# inspeciona uma cápsula do registry
+caeles inspect com.caeles.example.hello
+caeles inspect com.caeles.example.hello --json
+
+# inspeciona uma execução específica
+caeles inspect-run run-<id>
+caeles inspect-run run-<id> --json
+
+# logs de uma execução específica
+caeles logs run-<id>
+caeles logs run-<id> --json
+
+# remove uma execução específica do histórico
+caeles rm run-<id>
+
+# remove em lote por filtros
+caeles rm --status failed --capsule-id com.caeles.example.hello
+
+# limpa todo histórico/logs locais
+caeles rm --all
+```
+
+Durante desenvolvimento do próprio projeto, você também pode rodar via Cargo:
+
+```bash
+cargo run -p caeles-runtime -- list
+cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
+```
 Ou, no Android, via um app host que lista e executa cápsulas.
 
 🤝 Contribuição

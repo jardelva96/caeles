@@ -1,11 +1,19 @@
 mod manifest;
 mod runtime;
+mod state;
 
 use crate::manifest::CapsuleManifest;
-use clap::Parser;
-use serde::Deserialize;
+use crate::state::{
+    append_run_record, ensure_state_dirs, load_run_records, log_file_path, persist_run_records,
+    runs_file_path, write_log_line, RunRecord,
+};
+use clap::{Args, Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
@@ -15,49 +23,970 @@ struct RegistryEntry {
 }
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "caeles-runtime",
-    about = "CAELES runtime: executa cápsulas a partir de manifest ou ID"
-)]
-struct Args {
-    /// Caminho para o arquivo de manifest JSON da cápsula
+#[command(name = "caeles", about = "CAELES CLI")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Run(RunArgs),
+    List(ListArgs),
+    Build(BuildArgs),
+    Package(PackageArgs),
+    Pull(PullArgs),
+    Images(ImagesArgs),
+    Ps(PsArgs),
+    Inspect(InspectArgs),
+    InspectRun(InspectRunArgs),
+    Logs(LogsArgs),
+    Rm(RmArgs),
+}
+
+#[derive(Debug, Args)]
+struct RunArgs {
     #[arg(long, conflicts_with = "capsule_id")]
     manifest: Option<PathBuf>,
-
-    /// ID da cápsula (procurado no registry JSON)
     #[arg(long, conflicts_with = "manifest")]
     capsule_id: Option<String>,
-
-    /// Caminho para o arquivo de registry de cápsulas
     #[arg(long, default_value = "capsules/registry.json")]
     registry: PathBuf,
 }
 
-fn load_manifest_from_registry(registry_path: &Path, id: &str) -> anyhow::Result<CapsuleManifest> {
+#[derive(Debug, Args)]
+struct ListArgs {
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct BuildArgs {
+    path: PathBuf,
+    #[arg(long, default_value_t = false)]
+    release: bool,
+    #[arg(long, default_value = "wasm32-unknown-unknown")]
+    target: String,
+}
+
+#[derive(Debug, Args)]
+struct PackageArgs {
+    #[arg(long, conflicts_with = "capsule_id")]
+    manifest: Option<PathBuf>,
+    #[arg(long, conflicts_with = "manifest")]
+    capsule_id: Option<String>,
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value = ".caeles/packages")]
+    output_dir: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct PullArgs {
+    capsule_id: String,
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value = ".caeles/pulled")]
+    output_dir: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ImagesArgs {
+    #[arg(long, default_value = ".caeles/packages")]
+    packages_dir: PathBuf,
+    #[arg(long, default_value = ".caeles/pulled")]
+    pulled_dir: PathBuf,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PsArgs {
+    #[arg(long, default_value_t = 10)]
+    limit: usize,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+    /// Filtra por status da execução (ex.: failed, exited).
+    #[arg(long)]
+    status: Option<String>,
+    /// Filtra por ID da cápsula.
+    #[arg(long)]
+    capsule_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct InspectArgs {
+    capsule_id: String,
+    #[arg(long, default_value = "capsules/registry.json")]
+    registry: PathBuf,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct LogsArgs {
+    run_id: String,
+    #[arg(long)]
+    tail: Option<usize>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct InspectRunArgs {
+    run_id: String,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RmArgs {
+    run_id: Option<String>,
+    #[arg(long, default_value_t = false, conflicts_with = "run_id")]
+    all: bool,
+    /// Remove execuções por status (ex.: failed, exited).
+    #[arg(long, conflicts_with = "run_id")]
+    status: Option<String>,
+    /// Remove execuções por ID da cápsula.
+    #[arg(long, conflicts_with = "run_id")]
+    capsule_id: Option<String>,
+}
+
+fn now_unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_millis()
+}
+
+fn load_registry_entries(registry_path: &Path) -> anyhow::Result<Vec<RegistryEntry>> {
     let text = fs::read_to_string(registry_path)?;
     let entries: Vec<RegistryEntry> = serde_json::from_str(&text)?;
 
+    let mut seen_ids = HashSet::new();
+    for entry in &entries {
+        if !seen_ids.insert(&entry.id) {
+            anyhow::bail!("ID duplicado no registry: '{}'", entry.id);
+        }
+    }
+
+    Ok(entries)
+}
+
+fn resolve_manifest_path(registry_path: &Path, manifest: &str) -> PathBuf {
+    let manifest_path = Path::new(manifest);
+
+    if manifest_path.is_absolute() {
+        return manifest_path.to_path_buf();
+    }
+
+    let registry_dir = registry_path.parent().unwrap_or_else(|| Path::new("."));
+    if manifest_path.exists() {
+        return manifest_path.to_path_buf();
+    }
+
+    registry_dir.join(manifest_path)
+}
+
+fn resolve_manifest_with_registry(
+    manifest: Option<&PathBuf>,
+    capsule_id: Option<&String>,
+    registry: &Path,
+) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
+    if let Some(path) = manifest {
+        return Ok((CapsuleManifest::load(path)?, path.clone()));
+    }
+
+    if let Some(id) = capsule_id {
+        let entries = load_registry_entries(registry)?;
+        let entry = entries.iter().find(|e| e.id == *id).ok_or_else(|| {
+            anyhow::anyhow!(format!("Capsule id '{id}' não encontrado no registry"))
+        })?;
+
+        let manifest_path = resolve_manifest_path(registry, &entry.manifest);
+        if !manifest_path.exists() {
+            anyhow::bail!(
+                "Manifest da cápsula '{}' não encontrado em '{}'",
+                id,
+                manifest_path.display()
+            );
+        }
+
+        return Ok((CapsuleManifest::load(&manifest_path)?, manifest_path));
+    }
+
+    anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>")
+}
+
+fn resolve_manifest_by_args(args: &RunArgs) -> anyhow::Result<(CapsuleManifest, PathBuf)> {
+    resolve_manifest_with_registry(
+        args.manifest.as_ref(),
+        args.capsule_id.as_ref(),
+        &args.registry,
+    )
+}
+
+fn run_command(args: RunArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+    let (manifest, manifest_path) = resolve_manifest_by_args(&args)?;
+
+    let started = now_unix_ms();
+    let run_id = format!("run-{started}");
+
+    write_log_line(
+        &state_dir,
+        &run_id,
+        &format!(
+            "starting capsule id={} name={} manifest={}",
+            manifest.id,
+            manifest.name,
+            manifest_path.display()
+        ),
+    )?;
+
+    let result = runtime::run_capsule(&manifest);
+
+    let finished = now_unix_ms();
+    let status = if result.is_ok() { "exited" } else { "failed" };
+
+    if let Err(err) = &result {
+        write_log_line(&state_dir, &run_id, &format!("runtime_error: {err}"))?;
+    } else {
+        write_log_line(&state_dir, &run_id, "runtime_exit: success")?;
+    }
+
+    append_run_record(
+        &state_dir,
+        &RunRecord {
+            run_id: run_id.clone(),
+            capsule_id: manifest.id.clone(),
+            capsule_name: manifest.name.clone(),
+            manifest_path: manifest_path.display().to_string(),
+            status: status.to_string(),
+            started_at_unix_ms: started,
+            finished_at_unix_ms: finished,
+        },
+    )?;
+
+    println!("> run id: {run_id}");
+    result
+}
+
+#[derive(Debug, Serialize)]
+struct ListViewItem {
+    id: String,
+    name: String,
+    manifest: String,
+    manifest_exists: bool,
+}
+
+fn list_command(args: ListArgs) -> anyhow::Result<()> {
+    let entries = load_registry_entries(&args.registry)?;
+
+    if entries.is_empty() {
+        if args.json {
+            println!("[]");
+        } else {
+            println!(
+                "Nenhuma cápsula encontrada no registry: {}",
+                args.registry.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let items: Vec<ListViewItem> = entries
+        .into_iter()
+        .map(|entry| {
+            let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
+            ListViewItem {
+                id: entry.id,
+                name: entry.name,
+                manifest: manifest_path.display().to_string(),
+                manifest_exists: manifest_path.exists(),
+            }
+        })
+        .collect();
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&items)?);
+        return Ok(());
+    }
+
+    println!("Cápsulas em {}:", args.registry.display());
+    for item in items {
+        println!("- {} ({})", item.id, item.name);
+        if item.manifest_exists {
+            println!("  manifest: {}", item.manifest);
+        } else {
+            println!("  manifest: {} [não encontrado]", item.manifest);
+        }
+    }
+
+    Ok(())
+}
+
+fn build_command(args: BuildArgs) -> anyhow::Result<()> {
+    let manifest_path = if args.path.is_dir() {
+        args.path.join("Cargo.toml")
+    } else {
+        args.path.clone()
+    };
+
+    if !manifest_path.exists() {
+        anyhow::bail!("Cargo.toml não encontrado em '{}'", manifest_path.display());
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .arg("--target")
+        .arg(&args.target);
+
+    if args.release {
+        cmd.arg("--release");
+    }
+
+    println!("> Executando: {:?}", cmd);
+    let status = cmd.status().map_err(|e| {
+        anyhow::anyhow!(
+            "Não foi possível executar o comando cargo. Instale Rust/Cargo para usar `caeles build`: {e}"
+        )
+    })?;
+    if !status.success() {
+        anyhow::bail!("Falha ao compilar cápsula com cargo build");
+    }
+
+    println!("> Build concluído: {}", manifest_path.display());
+    Ok(())
+}
+
+fn package_command(args: PackageArgs) -> anyhow::Result<()> {
+    let (manifest, manifest_path) = resolve_manifest_with_registry(
+        args.manifest.as_ref(),
+        args.capsule_id.as_ref(),
+        &args.registry,
+    )?;
+
+    let wasm_path = manifest.wasm_path();
+    if !wasm_path.exists() {
+        anyhow::bail!("Arquivo wasm não encontrado em '{}'", wasm_path.display());
+    }
+
+    let pkg_dir = args.output_dir.join(&manifest.id).join(&manifest.version);
+    fs::create_dir_all(&pkg_dir)?;
+
+    let manifest_out = pkg_dir.join("manifest.json");
+    let wasm_out = pkg_dir.join("capsule.wasm");
+    fs::copy(&manifest_path, &manifest_out)?;
+    fs::copy(&wasm_path, &wasm_out)?;
+
+    let metadata = serde_json::json!({
+        "id": manifest.id,
+        "name": manifest.name,
+        "version": manifest.version,
+        "source_manifest": manifest_path.display().to_string(),
+        "packaged_at_unix_ms": now_unix_ms()
+    });
+    fs::write(
+        pkg_dir.join("package.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+
+    println!("> Package criado em {}", pkg_dir.display());
+    Ok(())
+}
+
+fn pull_command(args: PullArgs) -> anyhow::Result<()> {
+    let (manifest, manifest_path) =
+        resolve_manifest_with_registry(None, Some(&args.capsule_id), &args.registry)?;
+
+    let wasm_path = manifest.wasm_path();
+    if !wasm_path.exists() {
+        anyhow::bail!("Arquivo wasm não encontrado em '{}'", wasm_path.display());
+    }
+
+    let pull_dir = args.output_dir.join(&manifest.id).join(&manifest.version);
+    fs::create_dir_all(&pull_dir)?;
+
+    fs::copy(&manifest_path, pull_dir.join("manifest.json"))?;
+    fs::copy(&wasm_path, pull_dir.join("capsule.wasm"))?;
+
+    println!(
+        "> Capsule '{}' disponível em {}",
+        manifest.id,
+        pull_dir.display()
+    );
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ImageView {
+    source: String,
+    capsule_id: String,
+    version: String,
+    path: String,
+}
+
+fn collect_images(root: &Path, source: &str) -> anyhow::Result<Vec<ImageView>> {
+    let mut images = Vec::new();
+    if !root.exists() {
+        return Ok(images);
+    }
+
+    for id_entry in fs::read_dir(root)? {
+        let id_entry = id_entry?;
+        if !id_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let capsule_id = id_entry.file_name().to_string_lossy().to_string();
+
+        for version_entry in fs::read_dir(id_entry.path())? {
+            let version_entry = version_entry?;
+            if !version_entry.file_type()?.is_dir() {
+                continue;
+            }
+            let version = version_entry.file_name().to_string_lossy().to_string();
+            images.push(ImageView {
+                source: source.to_string(),
+                capsule_id: capsule_id.clone(),
+                version,
+                path: version_entry.path().display().to_string(),
+            });
+        }
+    }
+
+    Ok(images)
+}
+
+fn images_command(args: ImagesArgs) -> anyhow::Result<()> {
+    let mut images = collect_images(&args.packages_dir, "package")?;
+    images.extend(collect_images(&args.pulled_dir, "pull")?);
+
+    images.sort_by(|a, b| {
+        a.capsule_id
+            .cmp(&b.capsule_id)
+            .then_with(|| a.version.cmp(&b.version))
+            .then_with(|| a.source.cmp(&b.source))
+    });
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&images)?);
+        return Ok(());
+    }
+
+    if images.is_empty() {
+        println!("Nenhuma imagem local encontrada.");
+        return Ok(());
+    }
+
+    println!("SOURCE | CAPSULE | VERSION | PATH");
+    for image in images {
+        println!(
+            "{} | {} | {} | {}",
+            image.source, image.capsule_id, image.version, image.path
+        );
+    }
+
+    Ok(())
+}
+
+fn ps_command(args: PsArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+    let mut runs = load_run_records(&state_dir)?;
+
+    runs.sort_by_key(|r| r.started_at_unix_ms);
+    runs.reverse();
+
+    let runs: Vec<RunRecord> = runs
+        .into_iter()
+        .filter(|r| match &args.status {
+            Some(status) => r.status == *status,
+            None => true,
+        })
+        .filter(|r| match &args.capsule_id {
+            Some(capsule_id) => r.capsule_id == *capsule_id,
+            None => true,
+        })
+        .take(args.limit)
+        .collect();
+
+    if runs.is_empty() {
+        if args.json {
+            println!("[]");
+        } else {
+            println!("Nenhuma execução registrada para os filtros informados.");
+        }
+        return Ok(());
+    }
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&runs)?);
+        return Ok(());
+    }
+
+    println!("RUN ID | CAPSULE | STATUS | STARTED(ms) | DURATION(ms)");
+    for record in runs {
+        let duration = record
+            .finished_at_unix_ms
+            .saturating_sub(record.started_at_unix_ms);
+        println!(
+            "{} | {} ({}) | {} | {} | {}",
+            record.run_id,
+            record.capsule_name,
+            record.capsule_id,
+            record.status,
+            record.started_at_unix_ms,
+            duration
+        );
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct InspectRunViewItem {
+    run_id: String,
+    status: String,
+    started_ms: u128,
+    finished_ms: u128,
+    manifest: String,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectView {
+    id: String,
+    name: String,
+    registry: String,
+    manifest: String,
+    manifest_exists: bool,
+    last_runs: Vec<InspectRunViewItem>,
+}
+
+fn inspect_command(args: InspectArgs) -> anyhow::Result<()> {
+    let entries = load_registry_entries(&args.registry)?;
     let entry = entries
         .iter()
-        .find(|e| e.id == id)
-        .ok_or_else(|| anyhow::anyhow!(format!("Capsule id '{id}' não encontrado no registry")))?;
+        .find(|e| e.id == args.capsule_id)
+        .ok_or_else(|| anyhow::anyhow!("Capsule id '{}' não encontrado", args.capsule_id))?;
 
-    let manifest_path = Path::new(&entry.manifest);
-    CapsuleManifest::load(manifest_path)
+    let manifest_path = resolve_manifest_path(&args.registry, &entry.manifest);
+
+    let state_dir = ensure_state_dirs()?;
+    let mut runs: Vec<RunRecord> = load_run_records(&state_dir)?
+        .into_iter()
+        .filter(|r| r.capsule_id == entry.id)
+        .collect();
+    runs.sort_by_key(|r| r.started_at_unix_ms);
+    runs.reverse();
+
+    let last_runs: Vec<InspectRunViewItem> = runs
+        .into_iter()
+        .take(5)
+        .map(|r| InspectRunViewItem {
+            run_id: r.run_id,
+            status: r.status,
+            started_ms: r.started_at_unix_ms,
+            finished_ms: r.finished_at_unix_ms,
+            manifest: r.manifest_path,
+        })
+        .collect();
+
+    let view = InspectView {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        registry: args.registry.display().to_string(),
+        manifest: manifest_path.display().to_string(),
+        manifest_exists: manifest_path.exists(),
+        last_runs,
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+        return Ok(());
+    }
+
+    println!("id: {}", view.id);
+    println!("name: {}", view.name);
+    println!("registry: {}", view.registry);
+    println!("manifest: {}", view.manifest);
+    println!("manifest_exists: {}", view.manifest_exists);
+
+    if view.last_runs.is_empty() {
+        println!("last_runs: []");
+    } else {
+        println!("last_runs:");
+        for r in view.last_runs {
+            println!(
+                "- run_id={} status={} started_ms={} finished_ms={} manifest={}",
+                r.run_id, r.status, r.started_ms, r.finished_ms, r.manifest
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct InspectRunView {
+    run_id: String,
+    capsule_id: String,
+    capsule_name: String,
+    manifest_path: String,
+    status: String,
+    started_at_unix_ms: u128,
+    finished_at_unix_ms: u128,
+    duration_ms: u128,
+    log_path: String,
+    log_exists: bool,
+}
+
+fn inspect_run_command(args: InspectRunArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+    let runs = load_run_records(&state_dir)?;
+    let run = runs
+        .into_iter()
+        .find(|r| r.run_id == args.run_id)
+        .ok_or_else(|| anyhow::anyhow!("Run id '{}' não encontrado", args.run_id))?;
+
+    let log_path = log_file_path(&state_dir, &run.run_id);
+    let view = InspectRunView {
+        run_id: run.run_id,
+        capsule_id: run.capsule_id,
+        capsule_name: run.capsule_name,
+        manifest_path: run.manifest_path,
+        status: run.status,
+        started_at_unix_ms: run.started_at_unix_ms,
+        finished_at_unix_ms: run.finished_at_unix_ms,
+        duration_ms: run
+            .finished_at_unix_ms
+            .saturating_sub(run.started_at_unix_ms),
+        log_path: log_path.display().to_string(),
+        log_exists: log_path.exists(),
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+        return Ok(());
+    }
+
+    println!("run_id: {}", view.run_id);
+    println!("capsule_id: {}", view.capsule_id);
+    println!("capsule_name: {}", view.capsule_name);
+    println!("manifest_path: {}", view.manifest_path);
+    println!("status: {}", view.status);
+    println!("started_at_unix_ms: {}", view.started_at_unix_ms);
+    println!("finished_at_unix_ms: {}", view.finished_at_unix_ms);
+    println!("duration_ms: {}", view.duration_ms);
+    println!("log_path: {}", view.log_path);
+    println!("log_exists: {}", view.log_exists);
+
+    Ok(())
+}
+
+fn logs_command(args: LogsArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+    let path = log_file_path(&state_dir, &args.run_id);
+    if !path.exists() {
+        anyhow::bail!("Logs da execução '{}' não encontrados", args.run_id);
+    }
+
+    let text = fs::read_to_string(path)?;
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    if let Some(tail) = args.tail {
+        if tail < lines.len() {
+            lines = lines.split_off(lines.len() - tail);
+        }
+    }
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&lines)?);
+        return Ok(());
+    }
+
+    for line in lines {
+        println!("{line}");
+    }
+
+    Ok(())
+}
+fn rm_command(args: RmArgs) -> anyhow::Result<()> {
+    let state_dir = ensure_state_dirs()?;
+
+    if args.all {
+        let runs_path = runs_file_path(&state_dir);
+        if runs_path.exists() {
+            fs::remove_file(&runs_path)?;
+        }
+        let logs_dir = state_dir.join("logs");
+        if logs_dir.exists() {
+            fs::remove_dir_all(&logs_dir)?;
+        }
+        fs::create_dir_all(state_dir.join("logs"))?;
+        println!("Histórico e logs removidos.");
+        return Ok(());
+    }
+
+    let mut runs = load_run_records(&state_dir)?;
+
+    if let Some(run_id) = args.run_id {
+        let before = runs.len();
+        runs.retain(|r| r.run_id != run_id);
+        if runs.len() == before {
+            anyhow::bail!("Run id '{}' não encontrado", run_id);
+        }
+        persist_run_records(&state_dir, &runs)?;
+
+        let log_path = log_file_path(&state_dir, &run_id);
+        if log_path.exists() {
+            fs::remove_file(log_path)?;
+        }
+
+        println!("Run '{}' removido.", run_id);
+        return Ok(());
+    }
+
+    let status_filter = args.status;
+    let capsule_filter = args.capsule_id;
+    if status_filter.is_none() && capsule_filter.is_none() {
+        anyhow::bail!("Informe <run_id>, --all, --status ou --capsule-id");
+    }
+
+    let mut removed_ids = Vec::new();
+    runs.retain(|r| {
+        let status_match = status_filter
+            .as_ref()
+            .map(|s| r.status == *s)
+            .unwrap_or(true);
+        let capsule_match = capsule_filter
+            .as_ref()
+            .map(|c| r.capsule_id == *c)
+            .unwrap_or(true);
+
+        let should_remove = status_match && capsule_match;
+        if should_remove {
+            removed_ids.push(r.run_id.clone());
+            false
+        } else {
+            true
+        }
+    });
+
+    if removed_ids.is_empty() {
+        anyhow::bail!("Nenhuma execução encontrada para os filtros informados");
+    }
+
+    persist_run_records(&state_dir, &runs)?;
+    for run_id in &removed_ids {
+        let log_path = log_file_path(&state_dir, run_id);
+        if log_path.exists() {
+            fs::remove_file(log_path)?;
+        }
+    }
+
+    println!("{} execução(ões) removida(s).", removed_ids.len());
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    let manifest = if let Some(path) = args.manifest {
-        // Caminho direto para o manifest
-        CapsuleManifest::load(&path)?
-    } else if let Some(id) = args.capsule_id {
-        // Resolve via registry
-        load_manifest_from_registry(&args.registry, &id)?
-    } else {
-        anyhow::bail!("Use --manifest <arquivo> ou --capsule-id <id-da-capsula>");
-    };
+    match cli.command {
+        Commands::Run(args) => run_command(args),
+        Commands::List(args) => list_command(args),
+        Commands::Build(args) => build_command(args),
+        Commands::Package(args) => package_command(args),
+        Commands::Pull(args) => pull_command(args),
+        Commands::Images(args) => images_command(args),
+        Commands::Ps(args) => ps_command(args),
+        Commands::Inspect(args) => inspect_command(args),
+        Commands::InspectRun(args) => inspect_run_command(args),
+        Commands::Logs(args) => logs_command(args),
+        Commands::Rm(args) => rm_command(args),
+    }
+}
 
-    runtime::run_capsule(&manifest)
+#[cfg(test)]
+mod tests {
+    use super::{resolve_manifest_path, Cli, Commands};
+    use clap::Parser;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("caeles-{prefix}-{suffix}"));
+        fs::create_dir_all(&dir).expect("temp directory should be created");
+        dir
+    }
+
+    #[test]
+    fn parse_run_subcommand() {
+        let cli =
+            Cli::try_parse_from(["caeles", "run", "--capsule-id", "com.caeles.example.hello"])
+                .expect("run command should parse");
+        assert!(matches!(cli.command, Commands::Run(_)));
+    }
+
+    #[test]
+    fn parse_build_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "build", "capsules/hello-capsule"])
+            .expect("build command should parse");
+        assert!(matches!(cli.command, Commands::Build(_)));
+    }
+
+    #[test]
+    fn parse_package_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "package",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("package command should parse");
+        assert!(matches!(cli.command, Commands::Package(_)));
+    }
+
+    #[test]
+    fn parse_pull_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "pull", "com.caeles.example.hello"])
+            .expect("pull command should parse");
+        assert!(matches!(cli.command, Commands::Pull(_)));
+    }
+
+    #[test]
+    fn parse_images_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "images", "--json"])
+            .expect("images command should parse");
+        assert!(matches!(cli.command, Commands::Images(_)));
+    }
+
+    #[test]
+    fn parse_list_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "list", "--json"]).expect("list should parse");
+        assert!(matches!(cli.command, Commands::List(_)));
+    }
+
+    #[test]
+    fn parse_ps_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "ps", "--limit", "3"]).expect("ps should parse");
+        assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_ps_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "ps", "--json"]).expect("ps json should parse");
+        assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_ps_with_filters_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "ps",
+            "--status",
+            "failed",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("ps with filters should parse");
+        assert!(matches!(cli.command, Commands::Ps(_)));
+    }
+
+    #[test]
+    fn parse_inspect_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "inspect", "com.caeles.example.hello", "--json"])
+            .expect("inspect json should parse");
+        assert!(matches!(cli.command, Commands::Inspect(_)));
+    }
+
+    #[test]
+    fn parse_inspect_run_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "inspect-run", "run-123", "--json"])
+            .expect("inspect-run json should parse");
+        assert!(matches!(cli.command, Commands::InspectRun(_)));
+    }
+
+    #[test]
+    fn parse_logs_json_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "logs", "run-123", "--json"])
+            .expect("logs json should parse");
+        assert!(matches!(cli.command, Commands::Logs(_)));
+    }
+
+    #[test]
+    fn parse_rm_all_subcommand() {
+        let cli = Cli::try_parse_from(["caeles", "rm", "--all"]).expect("rm should parse");
+        assert!(matches!(cli.command, Commands::Rm(_)));
+    }
+
+    #[test]
+    fn parse_rm_with_filters_subcommand() {
+        let cli = Cli::try_parse_from([
+            "caeles",
+            "rm",
+            "--status",
+            "failed",
+            "--capsule-id",
+            "com.caeles.example.hello",
+        ])
+        .expect("rm with filters should parse");
+        assert!(matches!(cli.command, Commands::Rm(_)));
+    }
+
+    #[test]
+    fn resolve_manifest_path_keeps_existing_relative_manifest() {
+        let root = temp_dir("existing-relative");
+        let existing_manifest = root.join("capsules/hello-capsule/manifest.json");
+
+        fs::create_dir_all(
+            existing_manifest
+                .parent()
+                .expect("manifest should have parent"),
+        )
+        .expect("manifest parent should be created");
+        fs::write(&existing_manifest, "{}")
+            .expect("manifest file should be created for test setup");
+
+        let previous_dir = std::env::current_dir().expect("current dir should be readable");
+        std::env::set_current_dir(&root).expect("current dir should be changed for test");
+
+        let resolved = resolve_manifest_path(
+            Path::new("capsules/registry.json"),
+            "capsules/hello-capsule/manifest.json",
+        );
+
+        std::env::set_current_dir(previous_dir).expect("current dir should be restored");
+
+        assert_eq!(resolved, Path::new("capsules/hello-capsule/manifest.json"));
+
+        fs::remove_dir_all(root).expect("temp directory should be removed");
+    }
+
+    #[test]
+    fn resolve_manifest_path_uses_registry_dir_for_registry_relative_manifest() {
+        let registry = Path::new("capsules/registry.json");
+        let manifest = "hello-capsule/manifest.json";
+
+        let resolved = resolve_manifest_path(registry, manifest);
+
+        assert_eq!(resolved, Path::new("capsules/hello-capsule/manifest.json"));
+    }
+
+    #[test]
+    fn resolve_manifest_path_keeps_absolute_manifest() {
+        let registry = Path::new("capsules/registry.json");
+        let manifest = "/tmp/manifest.json";
+
+        let resolved = resolve_manifest_path(registry, manifest);
+
+        assert_eq!(resolved, Path::new("/tmp/manifest.json"));
+    }
 }
