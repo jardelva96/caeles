@@ -1,4 +1,4 @@
-﻿use crate::manifest::CapsuleManifest;
+use crate::manifest::CapsuleManifest;
 use anyhow::{Context, Result};
 use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 

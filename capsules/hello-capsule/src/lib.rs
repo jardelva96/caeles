@@ -1,4 +1,4 @@
-﻿use caeles_sdk::{log, notify};
+use caeles_sdk::{log, notify};
 
 #[no_mangle]
 pub extern "C" fn caeles_main() {

@@ -1,4 +1,4 @@
-﻿# CAELES
+# CAELES
 
 CAELES is a capsule runtime and CLI for running isolated WebAssembly modules with a small host ABI.
 

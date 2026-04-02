@@ -1,4 +1,4 @@
-﻿#[link(wasm_import_module = "caeles")]
+#[link(wasm_import_module = "caeles")]
 extern "C" {
     fn host_log(ptr: *const u8, len: u32);
     fn host_notify(ptr: *const u8, len: u32);

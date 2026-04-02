@@ -1,4 +1,4 @@
-﻿use caeles_sdk::{http_get, log, notify, NetworkError};
+use caeles_sdk::{http_get, log, notify, NetworkError};
 
 #[no_mangle]
 pub extern "C" fn caeles_main() {

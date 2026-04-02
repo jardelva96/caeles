@@ -1,4 +1,4 @@
-﻿# Technical Decision Record - Capsule Target v0
+# Technical Decision Record - Capsule Target v0
 
 ## Decision
 

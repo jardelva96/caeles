@@ -1,4 +1,4 @@
-﻿# Android Host PoC (Started)
+# Android Host PoC (Started)
 
 This directory now contains an initial Android host scaffold:
 

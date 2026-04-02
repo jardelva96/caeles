@@ -1,4 +1,4 @@
-﻿package com.caeles.host
+package com.caeles.host
 
 object CaelesBridge {
     init {

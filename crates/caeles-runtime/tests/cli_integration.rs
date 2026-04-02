@@ -1,4 +1,4 @@
-﻿use assert_cmd::Command;
+use assert_cmd::Command;
 use predicates::str::contains;
 use serde_json::Value;
 use std::fs;

@@ -1,4 +1,4 @@
-﻿# Security Roadmap (v0 -> v1)
+# Security Roadmap (v0 -> v1)
 
 This roadmap defines the hardening path for capsule isolation and host capability control.
 

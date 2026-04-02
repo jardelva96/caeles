@@ -1,4 +1,4 @@
-﻿# Capsule Definition of Done (v0)
+# Capsule Definition of Done (v0)
 
 A capsule is considered done for CAELES v0 when all items below pass.
 
