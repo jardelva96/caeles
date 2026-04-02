@@ -1,28 +1,40 @@
-/// Módulo de FFI com o host CAELES.
-///
-/// Este módulo declara as funções que a cápsula importa do runtime.
-/// O atributo `wasm_import_module = "caeles"` diz ao compilador que
-/// estas funções vêm do módulo de import "caeles" no WASM.
-#[link(wasm_import_module = "caeles")]
+﻿#[link(wasm_import_module = "caeles")]
 extern "C" {
     fn host_log(ptr: *const u8, len: u32);
     fn host_notify(ptr: *const u8, len: u32);
+    fn host_http_get(ptr: *const u8, len: u32) -> i32;
 }
 
-/// Envia uma string de log para o host CAELES.
-///
-/// No runtime, isso é implementado por uma função Rust registrada em wasmtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkError {
+    BlockedByPermission,
+    InvalidRequest,
+    HostFailure,
+}
+
+/// Send a log line to the CAELES host runtime.
 pub fn log(msg: &str) {
     unsafe {
         host_log(msg.as_ptr(), msg.len() as u32);
     }
 }
 
-/// Envia uma notificação para o host CAELES.
-///
-/// O runtime pode aplicar regras de permissão com base no manifest.json.
+/// Send a notification to the CAELES host runtime.
 pub fn notify(msg: &str) {
     unsafe {
         host_notify(msg.as_ptr(), msg.len() as u32);
+    }
+}
+
+/// Perform a host-mediated HTTP GET request.
+///
+/// The runtime enforces the `permissions.network` flag from the manifest.
+pub fn http_get(url: &str) -> Result<(), NetworkError> {
+    let code = unsafe { host_http_get(url.as_ptr(), url.len() as u32) };
+    match code {
+        0 => Ok(()),
+        1 => Err(NetworkError::BlockedByPermission),
+        2 => Err(NetworkError::InvalidRequest),
+        _ => Err(NetworkError::HostFailure),
     }
 }

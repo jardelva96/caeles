@@ -1,26 +1,31 @@
-use crate::manifest::CapsuleManifest;
+﻿use crate::manifest::CapsuleManifest;
 use anyhow::{Context, Result};
 use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 
 fn read_string_from_memory(mut caller: Caller<'_, ()>, ptr: i32, len: i32) -> Option<String> {
+    if ptr < 0 || len < 0 {
+        eprintln!("[caeles-runtime] invalid pointer or length (ptr={ptr}, len={len})");
+        return None;
+    }
+
     let memory = match caller.get_export("memory") {
         Some(Extern::Memory(mem)) => mem,
         _ => {
-            eprintln!("[caeles-runtime] cápsula não exporta memória \"memory\"");
+            eprintln!("[caeles-runtime] capsule does not export memory \"memory\"");
             return None;
         }
     };
 
     let mut buf = vec![0u8; len as usize];
-    if let Err(e) = memory.read(&mut caller, ptr as usize, &mut buf) {
-        eprintln!("[caeles-runtime] erro lendo memória da cápsula: {e}");
+    if let Err(err) = memory.read(&mut caller, ptr as usize, &mut buf) {
+        eprintln!("[caeles-runtime] error reading capsule memory: {err}");
         return None;
     }
 
     match String::from_utf8(buf) {
-        Ok(s) => Some(s),
+        Ok(value) => Some(value),
         Err(_) => {
-            eprintln!("[caeles-runtime] bytes não são UTF-8 válidos");
+            eprintln!("[caeles-runtime] bytes are not valid UTF-8");
             None
         }
     }
@@ -31,18 +36,18 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
 
     let module_path = manifest.wasm_path();
     println!(
-        "> Executando cápsula '{}' (id={}, version={})",
+        "> Executing capsule '{}' (id={}, version={})",
         manifest.name, manifest.id, manifest.version
     );
     println!(
-        "> Permissões: notifications={}, network={}",
+        "> Permissions: notifications={}, network={}",
         manifest.permissions.notifications, manifest.permissions.network
     );
-    println!("> Carregando cápsula: {}", module_path.display());
+    println!("> Loading capsule: {}", module_path.display());
 
     let module = Module::from_file(&engine, &module_path).with_context(|| {
         format!(
-            "Falha ao carregar módulo WASM '{}'. Compile a cápsula antes de executar.",
+            "Failed to load WASM module '{}'. Build the capsule before running.",
             module_path.display()
         )
     })?;
@@ -70,8 +75,42 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
                     println!("[capsule-notify] {msg}");
                 } else {
                     println!(
-                        "[capsule-notify BLOQUEADA] Permissão 'notifications' = false. Mensagem seria: {msg}"
+                        "[capsule-notify BLOCKED] permission 'notifications' = false. Message: {msg}"
                     );
+                }
+            }
+        },
+    )?;
+
+    let network_allowed = manifest.permissions.network;
+    linker.func_wrap(
+        "caeles",
+        "host_http_get",
+        move |caller: Caller<'_, ()>, ptr: i32, len: i32| -> i32 {
+            let Some(url) = read_string_from_memory(caller, ptr, len) else {
+                return 2;
+            };
+
+            if !network_allowed {
+                println!(
+                    "[capsule-network BLOCKED] permission 'network' = false. Requested URL: {url}"
+                );
+                return 1;
+            }
+
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                println!("[capsule-network ERROR] invalid URL (use http:// or https://): {url}");
+                return 2;
+            }
+
+            match ureq::get(&url).call() {
+                Ok(response) => {
+                    println!("[capsule-network] GET {} -> {}", url, response.status());
+                    0
+                }
+                Err(err) => {
+                    println!("[capsule-network ERROR] GET {} failed: {}", url, err);
+                    3
                 }
             }
         },
@@ -80,9 +119,9 @@ pub fn run_capsule(manifest: &CapsuleManifest) -> Result<()> {
     let instance = linker.instantiate(&mut store, &module)?;
     let func = instance.get_typed_func::<(), ()>(&mut store, "caeles_main")?;
 
-    println!("> Chamando caeles_main da cápsula...");
+    println!("> Calling capsule caeles_main...");
     func.call(&mut store, ())?;
-    println!("> caeles_main terminou.");
+    println!("> caeles_main finished.");
 
     Ok(())
 }

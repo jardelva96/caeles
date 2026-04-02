@@ -1,193 +1,111 @@
-# CAELES
+﻿# CAELES
 
-**CAELES** é um motor de **cápsulas WebAssembly** focado em **Android**.  
+CAELES is a capsule runtime and CLI for running isolated WebAssembly modules with a small host ABI.
 
-<p align="center">
-  <img src="./caeleslogo.png" alt="Logo CAELES" width="320" />
-</p>
+## Technical Decision (v0)
 
-## 🔍 O que é o CAELES?
+CAELES v0 standardizes capsule artifacts on:
 
-O **CAELES** é uma plataforma para executar **cápsulas** – pequenos módulos compilados para **WASM/WASI** – de forma:
+- Target: `wasm32-unknown-unknown`
+- Entrypoint export: `caeles_main`
+- Host ABI module: `caeles`
 
-- 🔒 isolada (sandbox WebAssembly)  
-- 📱 pensada primeiro para **Android**  
-- ⚡ leve e portátil (o mesmo `.wasm` pode rodar em vários hosts)  
+Why this decision for v0:
 
-Você escreve a lógica da cápsula (por exemplo em Rust), gera um `.wasm`, descreve tudo em um **manifesto CAELES**, e o **núcleo CAELES** cuida de carregar e executar.
+- Keeps runtime deterministic with explicit host capabilities.
+- Avoids implicit WASI imports while ABI and permission model are still evolving.
+- Simplifies integration with non-desktop hosts (including Android app hosts).
 
----
+Decision record:
 
-## 🧩 Conceitos principais
+- [docs/technical-decision-target-v0.md](docs/technical-decision-target-v0.md)
 
-### Cápsula
+## Capsule Manifest (v0)
 
-Uma **cápsula CAELES** é a unidade básica do sistema.  
-Ela é composta por:
-
-- `capsule.wasm` – binário WebAssembly (`wasm32-wasi`)  
-- `capsule.manifest.json` – arquivo declarando como e com quais permissões ela roda
-
-Exemplo **simplificado** de manifesto (formato ainda em evolução):
+Required fields:
 
 ```json
 {
-  "id": "com.caeles.example.demo",
-  "name": "Cápsula Demo",
+  "id": "com.caeles.example.hello",
+  "name": "Hello Capsule",
   "version": "0.1.0",
-
-  "entry": "capsule.wasm",
-
+  "entry": "../../target/wasm32-unknown-unknown/debug/hello_capsule.wasm",
   "permissions": {
-    "notifications": false,
+    "notifications": true,
     "network": false
   },
-
   "lifecycle": {
     "kind": "on_demand"
   }
 }
 ```
-Núcleo CAELES (runtime)
-O núcleo CAELES é o “motor” que:
 
-lê e valida o manifesto
+Validation rules enforced by runtime:
 
-localiza e carrega o .wasm
+- `id`, `name`, `version`, and `entry` are required and non-empty.
+- `entry` must be a relative path and point to `.wasm`.
+- `lifecycle.kind` must be `on_demand` in v0.
+- Unknown fields are rejected (`deny_unknown_fields`).
 
-prepara o ambiente WASI (args, env, I/O, filesystem sandbox)
+## CLI Commands
 
-aplica permissões conforme o manifesto
-
-faz a ponte com o sistema host (Android, desktop, etc.)
-
-A implementação é em Rust, usando WebAssembly/WASI como base.
-
-🏗️ Arquitetura (alto nível)
-
-[ Android / Desktop / Outro host ]
-               │
-               ▼
-        [ Núcleo CAELES ]
-           (Rust + WASM)
-               │
-      carrega e executa
-               │
-               ▼
-        [ Cápsula WASM ]
-          (wasm32-wasi)
-No Android, o CAELES deve ser embutido em um app host, que chama o núcleo nativo.
-
-Em desktop, o núcleo pode ser usado para desenvolvimento, debug e testes de cápsulas.
-
-🚦 Estado atual
-🚧 Projeto em fase inicial (experimento).
-
-Objetivos desta fase:
-
-definir o conceito de cápsula CAELES v0
-
-experimentar o núcleo em Rust executando uma cápsula simples (wasm32-wasi)
-
-preparar o caminho para uma futura integração com Android
-
-A API, o formato de manifesto e a estrutura do código ainda podem mudar bastante.
-
-🧪 Visão de uso (futuro)
-Fluxo esperado para desenvolvedores:
-
-Escrever a cápsula em Rust (ou outra linguagem que compile para WASM):
-
-rustup target add wasm32-wasi
-cargo build --target wasm32-wasi
-Isso gera algo como:
-
-target/wasm32-wasi/debug/minha-capsula.wasm
-Criar um manifesto CAELES apontando para o .wasm:
-
-```json
-{
-  "id": "com.caeles.examples.mycapsule",
-  "name": "Minha Cápsula CAELES",
-  "version": "0.1.0",
-  "entry": "minha-capsula.wasm",
-  "permissions": {
-    "notifications": false
-  },
-  "lifecycle": {
-    "kind": "on_demand"
-  }
-}
-```
-Executar com o núcleo CAELES (quando disponível):
-
-
-caeles run path/para/capsule.manifest.json
-
-Também é possível usar a CLI no estilo Docker (`caeles <comando>`):
+Docker-style commands are supported:
 
 ```bash
-# após instalar/gerar o binário
+rustup target add wasm32-unknown-unknown
+
 caeles list
-caeles list --json
 caeles run --capsule-id com.caeles.example.hello
 caeles run --manifest capsules/hello-capsule/manifest.json
 
-# build da cápsula (este subcomando exige Rust/Cargo no ambiente)
 caeles build capsules/hello-capsule
-
-# empacota uma cápsula local (manifest + wasm)
 caeles package --capsule-id com.caeles.example.hello
-
-# “pull” local para diretório de artefatos
 caeles pull com.caeles.example.hello
-
-# lista imagens locais (pacotes/pulls)
 caeles images
-caeles images --json
 
-# execuções recentes (estilo docker ps)
 caeles ps --limit 10
-caeles ps --limit 10 --json
-caeles ps --status failed --capsule-id com.caeles.example.hello
-
-# inspeciona uma cápsula do registry
 caeles inspect com.caeles.example.hello
-caeles inspect com.caeles.example.hello --json
-
-# inspeciona uma execução específica
 caeles inspect-run run-<id>
-caeles inspect-run run-<id> --json
-
-# logs de uma execução específica
 caeles logs run-<id>
-caeles logs run-<id> --json
-
-# remove uma execução específica do histórico
 caeles rm run-<id>
-
-# remove em lote por filtros
-caeles rm --status failed --capsule-id com.caeles.example.hello
-
-# limpa todo histórico/logs locais
-caeles rm --all
 ```
 
-Durante desenvolvimento do próprio projeto, você também pode rodar via Cargo:
+Or through Cargo during development:
 
 ```bash
 cargo run -p caeles-runtime -- list
 cargo run -p caeles-runtime -- run --capsule-id com.caeles.example.hello
 ```
-Ou, no Android, via um app host que lista e executa cápsulas.
 
-🤝 Contribuição
-No momento, o foco é:
+## Definition of Done (Capsule v0)
 
-consolidar os conceitos (cápsula, manifesto, núcleo)
+See [docs/capsule-definition-of-done-v0.md](docs/capsule-definition-of-done-v0.md).
 
-evoluir o código inicial em Rust
+## Security and Permissions
 
-documentar decisões e ideias neste repositório
+Current host ABI capabilities:
 
-Sugestões de arquitetura, formato de manifesto, nomes de conceitos e ideias de cápsulas são bem-vindas via issues.
+- `host_log`
+- `host_notify`
+- `host_http_get`
+
+Permission enforcement in runtime:
+
+- `permissions.notifications=false` blocks notifications.
+- `permissions.network=false` blocks host-mediated HTTP GET.
+
+Roadmap for stronger sandboxing:
+
+- [docs/security-roadmap-v0.md](docs/security-roadmap-v0.md)
+
+## Android PoC Host
+
+Initial PoC scaffold and integration plan:
+
+- [android/poc-host/README.md](android/poc-host/README.md)
+
+## CI
+
+A GitHub Actions workflow runs format checks, linting, and tests:
+
+- `.github/workflows/ci.yml`

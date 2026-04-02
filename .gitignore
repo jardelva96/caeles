@@ -1,14 +1,17 @@
-# Build artifacts do Rust
+﻿# Rust build artifacts
 /target
 
-# Binários WebAssembly gerados
+# Generated WebAssembly binaries
 **/*.wasm
 
-# Arquivos de editor/IDE
+# Local CAELES runtime state/artifacts
+.caeles/
+
+# Editor/IDE files
 .vscode/
 .idea/
 *.iml
 
-# Arquivos de sistema
+# OS files
 .DS_Store
 Thumbs.db

@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const WASM_TARGET_V0: &str = "wasm32-unknown-unknown";
+
 #[derive(Debug, Deserialize)]
 struct RegistryEntry {
     pub id: String,
@@ -67,7 +69,7 @@ struct BuildArgs {
     path: PathBuf,
     #[arg(long, default_value_t = false)]
     release: bool,
-    #[arg(long, default_value = "wasm32-unknown-unknown")]
+    #[arg(long, default_value = WASM_TARGET_V0)]
     target: String,
 }
 
