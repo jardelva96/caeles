@@ -10,7 +10,8 @@ const CAPSULE_NAME: &str = "Demo Capsule";
 const CAPSULE_VERSION: &str = "0.1.0";
 
 fn run_caeles(workdir: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("caeles").expect("caeles binary should be available for tests");
+    let mut cmd =
+        Command::cargo_bin("caeles").expect("caeles binary should be available for tests");
     cmd.current_dir(workdir);
     cmd
 }
@@ -107,7 +108,10 @@ crate-type = ["cdylib"]
 pub extern "C" fn caeles_main() {}
 "#;
 
-    write_file(&workdir.join("capsules/build-capsule/Cargo.toml"), cargo_toml);
+    write_file(
+        &workdir.join("capsules/build-capsule/Cargo.toml"),
+        cargo_toml,
+    );
     write_file(&workdir.join("capsules/build-capsule/src/lib.rs"), lib_rs);
 }
 
@@ -218,9 +222,10 @@ fn cli_definition_of_done_happy_path() {
         .assert()
         .success();
 
-    let package_root = temp
-        .path()
-        .join(format!(".caeles/packages/{}/{}/", CAPSULE_ID, CAPSULE_VERSION));
+    let package_root = temp.path().join(format!(
+        ".caeles/packages/{}/{}/",
+        CAPSULE_ID, CAPSULE_VERSION
+    ));
     assert!(package_root.join("manifest.json").exists());
     assert!(package_root.join("capsule.wasm").exists());
     assert!(package_root.join("package.json").exists());
@@ -237,9 +242,10 @@ fn cli_definition_of_done_happy_path() {
         .assert()
         .success();
 
-    let pulled_root = temp
-        .path()
-        .join(format!(".caeles/pulled/{}/{}/", CAPSULE_ID, CAPSULE_VERSION));
+    let pulled_root = temp.path().join(format!(
+        ".caeles/pulled/{}/{}/",
+        CAPSULE_ID, CAPSULE_VERSION
+    ));
     assert!(pulled_root.join("manifest.json").exists());
     assert!(pulled_root.join("capsule.wasm").exists());
 
