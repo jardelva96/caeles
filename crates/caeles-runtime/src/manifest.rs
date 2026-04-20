@@ -23,6 +23,7 @@ pub enum LifecycleKind {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lifecycle {
+    #[allow(dead_code)]
     pub kind: LifecycleKind,
 }
 
@@ -34,6 +35,7 @@ pub struct CapsuleManifest {
     pub version: String,
     pub entry: String,
     pub permissions: Permissions,
+    #[allow(dead_code)]
     pub lifecycle: Lifecycle,
 
     #[serde(skip, default = "default_path_buf")]
