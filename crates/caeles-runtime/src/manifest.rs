@@ -49,7 +49,7 @@ impl CapsuleManifest {
 
         let mut manifest: CapsuleManifest = serde_json::from_str(&text).with_context(|| {
             format!(
-                "Manifest invalido em '{}': verifique campos obrigatorios e tipos",
+                "Manifest invalido em '{}': verifique campos obrigatorios e tipos (lifecycle.kind aceita: on_demand)",
                 path.display()
             )
         })?;
