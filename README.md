@@ -1,6 +1,52 @@
-# CAELES
+<p align="center">
+  <img src="caeles-logo.png" alt="CAELES logo" width="260" />
+</p>
 
-CAELES is a capsule runtime and CLI for running isolated WebAssembly modules with a small host ABI.
+<h1 align="center">CAELES</h1>
+
+<p align="center">
+  <em>Capsule runtime and CLI for running isolated WebAssembly modules with a small host ABI.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/jardelva96/caeles/actions/workflows/ci.yml">
+    <img src="https://github.com/jardelva96/caeles/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  </a>
+  <img src="https://img.shields.io/badge/rust-2021-orange.svg" alt="Rust 2021" />
+  <img src="https://img.shields.io/badge/wasm-wasm32--unknown--unknown-blue.svg" alt="wasm32-unknown-unknown" />
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" />
+</p>
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Host["Host (CLI or Android JNI)"]
+        CLI["caeles CLI"]
+        JNI["Android JNI bridge"]
+        RT["caeles-runtime"]
+        STATE[".caeles/state<br/>runs.jsonl + logs/"]
+        CLI --> RT
+        JNI --> RT
+        RT --> STATE
+    end
+
+    subgraph Sandbox["Wasmtime sandbox"]
+        WASM["capsule.wasm<br/>entry: caeles_main"]
+    end
+
+    subgraph ABI["Host ABI module: caeles"]
+        LOG["host_log"]
+        NOTIFY["host_notify"]
+        HTTP["host_http_get"]
+    end
+
+    RT --> Sandbox
+    WASM -- "imports" --> ABI
+    ABI -- "enforces manifest permissions" --> RT
+```
 
 ## Technical Decision (v0)
 
@@ -109,3 +155,7 @@ Initial PoC scaffold and integration plan:
 A GitHub Actions workflow runs format checks, linting, and tests:
 
 - `.github/workflows/ci.yml`
+
+## License
+
+MIT License. Copyright (c) 2026 Jardel Alves. See [LICENSE](LICENSE).
